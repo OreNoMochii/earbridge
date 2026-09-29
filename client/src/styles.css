@@ -1,0 +1,999 @@
+/* EarBridge. Mobile first; the conversation screen fills the screen like an app. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --surface-2: #e2e8f0;
+  /* the selected tab, raised above --surface-2 */
+  --raised: #ffffff;
+  --text: #0f172a;
+  --muted: #475569;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --input-bg: #ffffff;
+  --accent: #0f766e;
+  --accent-strong: #115e59;
+  --accent-contrast: #ffffff;
+  --accent-soft: #ccfbf1;
+  --mine-bg: #e6f6f4;
+  --danger: #b91c1c;
+  --danger-soft: #fee2e2;
+  --danger-border: #fca5a5;
+  --live: #16a34a;
+  --busy: #d97706;
+  --idle: #94a3b8;
+  --speaking: #7c3aed;
+  --toast-bg: #0f172a;
+  --toast-text: #f8fafc;
+  --shadow: 0 1px 3px rgb(15 23 42 / 0.12);
+  --radius: 1rem;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1220;
+    --surface: #111a2e;
+    --surface-2: #1b2640;
+    --raised: #2c3b5a;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #1e293b;
+    --border-strong: #334155;
+    --input-bg: #0b1220;
+    --accent: #2dd4bf;
+    --accent-strong: #5eead4;
+    --accent-contrast: #042f2e;
+    --accent-soft: #123f3c;
+    --mine-bg: #10302f;
+    --danger: #f87171;
+    --danger-soft: #3b1219;
+    --danger-border: #7f1d1d;
+    --live: #4ade80;
+    --busy: #fbbf24;
+    --idle: #64748b;
+    --speaking: #a78bfa;
+    --toast-bg: #e2e8f0;
+    --toast-text: #0f172a;
+    --shadow: 0 1px 3px rgb(0 0 0 / 0.5);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+noscript {
+  display: block;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+/* Buttons */
+
+.button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.75rem;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+
+.button.small {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.875rem;
+}
+
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.button.danger {
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+
+.button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (hover: hover) {
+  .button:not(:disabled):hover {
+    filter: brightness(0.96);
+  }
+}
+
+/* Setup screen */
+
+.setup {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: calc(1.25rem + env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+    calc(2rem + env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 1.25rem;
+}
+
+.brand-icon {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.8rem;
+  flex: none;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
+.brand p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.error-box {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--danger-border);
+  border-radius: 0.75rem;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.setup-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.tab {
+  position: relative;
+  display: block;
+  padding: 0.6rem 0.5rem;
+  border-radius: 0.8rem;
+  text-align: center;
+  cursor: pointer;
+}
+
+.tab input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.tab:has(input:checked) {
+  background: var(--raised);
+  box-shadow: var(--shadow);
+}
+
+.tab:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tab-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-label {
+  font-weight: 700;
+}
+
+.tab-detail {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+/* A floated legend is laid out like any other child, inside the card. */
+.card > legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  font-weight: 700;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.field label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.field select,
+.field input {
+  width: 100%;
+  min-height: 2.9rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.7rem;
+  background: var(--input-bg);
+  font-size: 1rem; /* below 16px, iOS zooms in on focus */
+}
+
+.field input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.field-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.swap {
+  align-self: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: -0.4rem 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.choice-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.9rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.75rem;
+  cursor: pointer;
+}
+
+.choice:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.choice input {
+  flex: none;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.choice-label {
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.invite-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem 0.5rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.75rem;
+  background: var(--accent-soft);
+}
+
+.invite-banner p {
+  margin: 0;
+}
+
+.invite-banner strong {
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+/* details elements do not reliably support flex layout */
+.advanced {
+  display: block;
+}
+
+.advanced > * + * {
+  margin-top: 0.75rem;
+}
+
+.advanced > summary {
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.start {
+  width: 100%;
+  min-height: 3.5rem;
+  border-radius: var(--radius);
+  font-size: 1.1rem;
+}
+
+.privacy {
+  margin: 1.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+/* Conversation screen */
+
+.live {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.live-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: calc(0.6rem + env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) 0.6rem
+    max(1rem, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.live-heading {
+  min-width: 0;
+}
+
+.live-title {
+  margin: 0;
+  font-size: 1.1rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.1rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-dot {
+  flex: none;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--idle);
+}
+
+.status-dot[data-tone='live'] {
+  background: var(--live);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.status-dot[data-tone='busy'] {
+  background: var(--busy);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.status-dot[data-tone='speaking'] {
+  background: var(--speaking);
+  animation: pulse 0.8s ease-in-out infinite;
+}
+
+.live-actions {
+  flex: none;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.toasts {
+  position: fixed;
+  z-index: 10;
+  top: calc(4.5rem + env(safe-area-inset-top));
+  left: 50%;
+  width: min(32rem, calc(100% - 2rem));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  pointer-events: none;
+}
+
+.toast {
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: 0.75rem;
+  background: var(--toast-bg);
+  color: var(--toast-text);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.25);
+  font-size: 0.9rem;
+  animation: toast-in 0.2s ease-out;
+}
+
+/* One phone: the latest translation, large, for the person facing you. */
+.partner {
+  flex: none;
+  max-height: 38vh;
+  margin: 0.75rem max(1rem, env(safe-area-inset-right)) 0 max(1rem, env(safe-area-inset-left));
+  padding: 0.6rem 1rem 1rem;
+  overflow-y: auto;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  transition: transform 0.35s ease;
+}
+
+.partner.flipped {
+  transform: rotate(180deg);
+}
+
+.partner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.partner-lang {
+  color: var(--accent-strong);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.partner-text {
+  margin: 0.25rem 0 0;
+  font-size: clamp(1.35rem, 5.5vw, 2.25rem);
+  font-weight: 650;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.partner-text.placeholder {
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.partner-text.streaming {
+  opacity: 0.8;
+}
+
+/* Room: invite panel and who is in the room. */
+.share {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center; /* the QR code, when it sits on a row of its own */
+  gap: 1rem;
+  max-height: 55vh;
+  margin: 0.75rem max(1rem, env(safe-area-inset-right)) 0 max(1rem, env(safe-area-inset-left));
+  padding: 1rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.qr-frame {
+  flex: none;
+  max-width: 100%;
+  padding: 0.5rem;
+  border-radius: 0.75rem;
+  background: #ffffff; /* QR codes need a light background to scan */
+  line-height: 0;
+}
+
+.qr-frame canvas {
+  display: block;
+  max-width: 100%;
+  height: auto !important; /* the QR library sets a fixed size */
+}
+
+.share-details {
+  flex: 1 1 12rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.share-code {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1.1;
+}
+
+.share-url {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.share-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.participants {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.6rem max(1rem, env(safe-area-inset-right)) 0 max(1rem, env(safe-area-inset-left));
+  list-style: none;
+}
+
+.participants:empty {
+  display: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  padding: 0.2rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip.me {
+  border-color: var(--accent);
+}
+
+.chip-lang {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* The transcript */
+.feed {
+  flex: 1 1 auto;
+  min-height: 6rem;
+  padding: 0.75rem max(1rem, env(safe-area-inset-right)) 1rem max(1rem, env(safe-area-inset-left));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.feed-empty {
+  max-width: 22rem;
+  margin: 2rem auto;
+  color: var(--muted);
+  text-align: center;
+}
+
+.feed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-width: 88%;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+
+.entry p {
+  margin: 0;
+}
+
+.entry.mine {
+  align-self: flex-end;
+  border-bottom-right-radius: 0.35rem;
+  background: var(--mine-bg);
+}
+
+.entry.theirs {
+  align-self: flex-start;
+  border-bottom-left-radius: 0.35rem;
+  background: var(--surface);
+}
+
+.entry-meta {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.entry-translation {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+/* What someone else said: the translation matters most, so it comes first. */
+.entry.theirs.translated .entry-translation {
+  order: 1;
+  color: var(--text);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.entry.theirs.translated .entry-original {
+  order: 2;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.entry-translation.pending,
+.entry-translation.empty {
+  font-style: italic;
+  font-weight: 400 !important;
+  color: var(--muted) !important;
+}
+
+.entry-translation.pending {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.entry-translation.streaming {
+  opacity: 0.85;
+}
+
+.entry-translation.failed {
+  color: var(--danger) !important;
+  font-size: 0.85rem !important;
+  font-weight: 500 !important;
+}
+
+.entry-translation.interrupted::after {
+  content: ' (cut off)';
+  color: var(--muted);
+  font-size: 0.8em;
+  font-weight: 400;
+}
+
+.feed-interims {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.6rem;
+}
+
+.interim {
+  margin: 0;
+  color: var(--muted);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.interim.mine {
+  text-align: end;
+}
+
+.interim-speaker {
+  font-style: normal;
+  font-weight: 600;
+}
+
+/* Talk controls */
+.controls {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.6rem max(1rem, env(safe-area-inset-right)) calc(0.75rem + env(safe-area-inset-bottom))
+    max(1rem, env(safe-area-inset-left));
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.mic-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.meter {
+  flex: 0 0 5rem;
+  height: 0.4rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.meter-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--live);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 60ms linear;
+}
+
+.meter[data-mode='silent'] .meter-fill {
+  background: var(--speaking);
+}
+
+.meter[data-mode='off'] .meter-fill {
+  background: var(--idle);
+  opacity: 0.6;
+}
+
+.mic-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.talk-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.6rem;
+}
+
+.segmented {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.75rem;
+}
+
+.segmented button {
+  flex: 1;
+  min-width: 0;
+  min-height: 3rem;
+  padding: 0.4rem 0.3rem;
+  border: 0;
+  background: var(--surface);
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.segmented button + button {
+  border-left: 1px solid var(--border-strong);
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.button.mute {
+  flex: none;
+  min-width: 5.5rem;
+  min-height: 3rem;
+}
+
+.button.mute.wide {
+  flex: 1;
+  min-height: 3.5rem;
+}
+
+.button.mute[aria-pressed='true'] {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #ffffff;
+}
+
+/* Hold to talk: big targets that do not select text or open menus when held. */
+.hold {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  min-width: 0;
+  min-height: 5.5rem;
+  padding: 0.5rem;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition:
+    transform 80ms ease,
+    background-color 80ms ease;
+}
+
+.hold[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  transform: scale(0.98);
+}
+
+.hold-label {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.hold-detail {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+/* "or hold the space bar" is for keyboards only */
+@media (hover: none) {
+  .live.room .hold-detail {
+    display: none;
+  }
+}
+
+@media (min-width: 48rem) {
+  .feed-list,
+  .feed-interims,
+  .feed-empty {
+    max-width: 44rem;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.4rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

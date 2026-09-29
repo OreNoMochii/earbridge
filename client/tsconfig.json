@@ -1,0 +1,19 @@
+{
+  // The browser app, bundled by Vite. Modules under test (see client/test) avoid DOM APIs
+  // because the tests run in Node and are type-checked by the root tsconfig.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023", "dom"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["vite/client"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "../shared"]
+}

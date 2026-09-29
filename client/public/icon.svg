@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0f766e"/>
+  <!-- earbud -->
+  <circle cx="236" cy="214" r="92" fill="#ffffff"/>
+  <rect x="190" y="240" width="60" height="190" rx="30" fill="#ffffff"/>
+  <circle cx="258" cy="200" r="30" fill="#115e59"/>
+  <!-- sound waves -->
+  <g fill="none" stroke-width="28" stroke-linecap="round">
+    <path d="M335.6 130.4A130 130 0 0 1 335.6 297.6" stroke="#99f6e4"/>
+    <path d="M381.5 91.9A190 190 0 0 1 381.5 336.1" stroke="#5eead4"/>
+  </g>
+</svg>
