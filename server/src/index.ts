@@ -79,9 +79,12 @@ app.server.listen(config.port, () => {
     if (!config.tls) {
       log.warn(
         'Phones only allow the microphone on HTTPS pages. Set TLS_CERT/TLS_KEY, put the server ' +
-          'behind an HTTPS proxy, or use `npm run dev` for local testing.',
+          'behind an HTTPS proxy, or use `npm run dev` for local testing. The EarBridge phone app needs no HTTPS.',
       );
     }
+  }
+  if (!config.tls) {
+    for (const address of lanAddresses) log.info(`  Server address for the EarBridge phone app: ${address}:${config.port}`);
   }
 });
 

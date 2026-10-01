@@ -2,15 +2,16 @@
 
 Live conversation translation for **any** earphones: AirPods, other Bluetooth buds, or wired ones.
 
-Apple built live translation into AirPods. EarBridge does the same for any earphones. It is a web app: open it in
-your phone's browser, put your earphones in and talk. Deepgram turns speech into text, a language model on DeepInfra
-translates it, and a natural-sounding voice, also from DeepInfra, reads the translation into your ears. The earphones
-need nothing special, because the app uses whatever microphone and audio output the phone is already using.
+Apple built live translation into AirPods. EarBridge does the same for any earphones. Open it in your phone's browser,
+or install the [phone app](#the-phone-app), then put your earphones in and talk. Deepgram turns speech into text, a
+language model on DeepInfra translates it, and a natural-sounding voice, also from DeepInfra, reads the translation
+into your ears. The earphones need nothing special, because the app uses whatever microphone and audio output the
+phone is already using.
 
 ## How it works
 
 ```
- phone (browser)                           relay server (this repo)
+ phone (browser or app)                    relay server (this repo)
 ┌──────────────────────────┐  WebSocket  ┌──────────────────────────┐
 │ microphone → 16 kHz PCM  │ ──────────► │ one session per phone    │ ──► Deepgram: streaming speech-to-text
 │                          │             │ rooms, recent context    │
@@ -26,8 +27,8 @@ need nothing special, because the app uses whatever microphone and audio output 
 4. A text-to-speech model on DeepInfra reads the finished translation in the listener's language, and the phone plays
    the audio. The sound goes wherever the phone is playing sound, which is your earphones.
 
-The API keys stay on the relay server. The browser never sees them. Anthropic's Claude can translate instead of
-DeepInfra; see [Configuration](#configuration).
+The API keys stay on the relay server. The browser and the phone app never see them. Anthropic's Claude can translate
+instead of DeepInfra; see [Configuration](#configuration).
 
 ## Two ways to use it
 
@@ -79,7 +80,8 @@ everything, which starts sooner but sounds more robotic, open **Advanced → Voi
 
 ## Which microphone?
 
-The app uses whichever microphone the phone gives it. To choose one yourself, open **Advanced → Microphone**.
+The web app uses whichever microphone the phone gives it. The phone app, set to **Automatic**, follows the advice
+below. To choose one yourself, open **Advanced → Microphone**.
 
 - **One phone: use the phone's own microphone,** held between you. It hears you both, and Bluetooth earphones keep
   their full sound quality. Earbud microphones are designed to pick up only the wearer's voice, so they can miss the
@@ -90,7 +92,7 @@ The app uses whichever microphone the phone gives it. To choose one yourself, op
 
 When any app opens a Bluetooth headset's microphone, the phone switches the headset to its hands-free profile (HFP).
 That profile lowers the sound to phone-call quality until the microphone closes again. It is a Bluetooth limitation,
-and a web app cannot change it.
+and apps cannot change it.
 
 ## Getting started
 
@@ -123,6 +125,73 @@ To try it on your phone:
 To try a room, other people open your invite link on their phones. While you use `npm run dev`, they must be on the
 same Wi-Fi.
 
+## The phone app
+
+The [`mobile/`](mobile) folder holds a phone app for Android and iPhone, built with Expo. It has the same screens and
+settings as the web app, and it uses the same relay server. Like the web app, it contains no API keys. What it adds:
+
+- **It keeps translating with the screen off.** On Android, a notification shows during a conversation, with **Mute**
+  and **End** buttons. The play/pause button on the earphones mutes and unmutes too.
+- **It needs no HTTPS,** so it can use the relay server on your computer as it is, with no certificate warning.
+- **It notices earphones.** When none are connected, it reads translations on the phone speaker and pauses the
+  microphone while it speaks.
+- **Invites open the app.** In a room, tap **Invite** to show a QR code and a link. They open EarBridge with the room
+  and the server filled in. If the server uses HTTPS, the invite is a web link instead, which works in a browser too.
+
+So far, the app has been built and tested for Android only, in the emulator. See [Limitations](#limitations). Could
+the phone do everything itself, with no server? [docs/on-device.md](docs/on-device.md) looks into it.
+
+### Using it on Android
+
+1. Start the server on your computer with `npm run dev` or `npm start`. It prints the address for the app, for
+   example `Server address for the EarBridge phone app: 192.168.1.20:8787`. If the computer asks whether Node may
+   accept incoming connections, allow it.
+2. Install the app on the phone. [Build it](#building-it-for-android), then either:
+   - connect the phone with USB debugging turned on, and run `adb install app-release.apk`; or
+   - copy the file to the phone and open it there. Android asks you to allow apps from that source, and Google Play
+     Protect may show a warning first.
+3. Open EarBridge. The first time, **Advanced** is already open: enter the address under **Server**. The phone must be
+   on the same Wi-Fi as the computer.
+4. If the server has an `ACCESS_TOKEN`, enter it under **Advanced → Access code**.
+5. Pick your languages and tap **Start**. Allow the microphone. Allow notifications too, so you can mute or end the
+   conversation from the lock screen.
+
+### Building it for Android
+
+You need Node.js 22.18 or newer, JDK 17, and the Android SDK, with `ANDROID_HOME` set to its folder. Android Studio
+installs the SDK.
+
+```sh
+cd mobile
+npm install
+npx expo prebuild --platform android
+cd android
+./gradlew assembleRelease
+```
+
+The app is then in `mobile/android/app/build/outputs/apk/release/app-release.apk`. It is signed with a debug key, which
+is fine for your own phones but not for Google Play.
+
+To build the server's address into the app, so that nobody has to type it, set `EXPO_PUBLIC_SERVER_URL` when you run
+Gradle: `EXPO_PUBLIC_SERVER_URL=http://192.168.1.20:8787 ./gradlew assembleRelease`. If you change it later, delete
+`mobile/android/app/build` first, or Gradle keeps the old address.
+
+### iPhone
+
+The app is set up for iPhone too, but it hasn't been built or tested on one yet. Building it needs a Mac with Xcode,
+and an iPhone connected to it with Developer Mode turned on (**Settings → Privacy & Security**):
+
+```sh
+cd mobile
+npm install
+npx expo run:ios --device --configuration Release
+```
+
+When the app first connects, allow it to use the local network. With a free Apple account, the app stops opening
+after 7 days, until you install it again. To hand it out through TestFlight or the App Store, you need the Apple
+Developer Program, which costs $99 a year. With that membership, [EAS Build](https://docs.expo.dev/build/introduction/)
+can also build the app in the cloud, without a Mac.
+
 ## Deploying
 
 ```sh
@@ -130,7 +199,8 @@ npm run build   # builds the app into client/dist
 npm start       # serves the app and the WebSocket (/ws) on PORT
 ```
 
-Phones need HTTPS. Do one of the following:
+Phone browsers need HTTPS to use the microphone. The phone app doesn't, but over the internet, HTTPS keeps
+conversations and the access code private. Do one of the following:
 
 - Set `TLS_CERT` and `TLS_KEY` to your certificate and key (PEM files).
 - Run the server behind an HTTPS reverse proxy, such as Caddy, nginx or a tunnel, that forwards WebSocket upgrades on
@@ -183,14 +253,18 @@ The app offers 34 languages, from English, Spanish, Chinese and Arabic to Catala
 ## Limitations
 
 - **Bluetooth microphones lower the sound quality** while they are in use. See [Which microphone?](#which-microphone).
-- **The app cannot choose where sound plays.** Phones don't let web pages pick an audio output. Sound plays wherever
-  the phone sends it: to the earphones when they are connected, otherwise to the speaker. **On the phone speaker**
-  means "read everything aloud". It does not force the sound to the speaker.
-- **Locked screens pause translation.** The app asks the phone to keep the screen on during a conversation. If the
-  phone locks anyway, the browser pauses the page until you come back. The connection then returns on its own. If the
-  phone stopped the microphone in the meantime, the app tells you so.
-- **iPhone is untested.** So far the app has been tested only in Chrome. iOS may also play speech through the earpiece
-  instead of the loudspeaker while the microphone is on, or play it more quietly.
+- **Sound plays where the phone sends it:** to the earphones when they are connected, otherwise to the speaker.
+  Phones don't let web pages pick an audio output, and the phone app follows the phone's choice too. **On the phone
+  speaker** means "read everything aloud". It does not force the sound to the speaker.
+- **In the browser, locked screens pause translation.** The web app asks the phone to keep the screen on during a
+  conversation. If the phone locks anyway, the browser pauses the page until you come back. The connection then
+  returns on its own. If the phone stopped the microphone in the meantime, the app tells you so. The
+  [phone app](#the-phone-app) keeps listening.
+- **iPhone is untested.** The web app has been tested only in Chrome, and the phone app only on Android. In Safari, iOS
+  may also play speech through the earpiece instead of the loudspeaker while the microphone is on, or play it more
+  quietly.
+- **The phone app has been tested only in the Android emulator.** Real Bluetooth earphones, their microphones and
+  buttons, and long conversations with the screen off still need testing on real phones.
 - **Natural voices aren't perfect.** They come from small, fast models. They sometimes mispronounce a word or read a
   time such as "8:00" oddly. The Chatterbox voices (German, Russian, Korean and the rest of its list) can sound
   accented, and now and then slur a word.
@@ -198,7 +272,8 @@ The app offers 34 languages, from English, Spanish, Chinese and Arabic to Catala
   voice and translate it as its owner's words. Use earphone microphones, or **Hold to talk**.
 - **Translation waits for a pause.** It starts when the speaker stops talking. Until then, you see the live
   transcript.
-- **Home screen icon:** the app can be added to the home screen, but it ships only an SVG icon, and iOS expects a PNG.
+- **Home screen icon:** the web app can be added to the home screen, but it ships only an SVG icon, and iOS expects a
+  PNG.
 
 ## Privacy
 
@@ -210,15 +285,18 @@ The app offers 34 languages, from English, Spanish, Chinese and Arabic to Catala
   receive.
 - **What the server keeps:** nothing is stored. There are no recordings, transcripts or accounts. Conversations and
   rooms exist in memory only while they are active, and the logs never contain what people say.
-- **What the phone keeps:** your settings, in the browser's local storage. These are your languages, mode, name,
-  microphone, voice and access code.
+- **What the phone keeps:** your settings. These are your languages, mode, name, microphone, voice and access code.
+  The web app keeps them in the browser's local storage. The phone app keeps them, with the server's address, in a
+  file in its own storage.
 
 ## Security
 
-- **API keys:** they never leave the server.
+- **API keys:** they never leave the server. Neither the web app nor the phone app contains them.
 - **`ACCESS_TOKEN`:** keeps strangers from using your server. It is compared in constant time.
-- **WebSocket origin check:** the WebSocket accepts only pages served from the server's own address or from
-  `ALLOWED_ORIGINS`. Other websites cannot use your server through their visitors' browsers.
+- **WebSocket origin check:** in a browser, only pages served from the server's own address or from `ALLOWED_ORIGINS`
+  can open the WebSocket. Other websites cannot use your server through their visitors' browsers. Apps that aren't
+  browsers, like the phone app, send no origin and are let in. On a server that others can reach, `ACCESS_TOKEN` is
+  what keeps them out.
 - **Content Security Policy:** it is strict, with no inline scripts or styles.
 - **Size limits:** messages, audio chunks, names and rooms all have a maximum size.
 
@@ -246,6 +324,11 @@ client/src/
   tts.ts            text-to-speech with the phone's voices
 client/public/      audio worklet, web app manifest, icon
 shared/             protocol, languages, room codes (used by both sides)
+mobile/             the phone app (Expo); it reuses code from client/src/ and shared/
+  App.tsx           setup screen, then a conversation
+  src/              screens, settings, the conversation, microphone and voices
+  modules/          Android audio: microphone, earphones, and the notification that keeps it running
+docs/on-device.md   research: speech recognition and translation on the phone itself
 server/test/, client/test/
 ```
 
@@ -262,6 +345,17 @@ server/test/, client/test/
 The server runs TypeScript directly with Node's type stripping, so it has no build step. Only erasable TypeScript
 syntax is allowed: for example, no `enum` and no constructor parameter properties.
 
+For the phone app, run these in `mobile/`:
+
+| Command                | What it does |
+|------------------------|--------------|
+| `npx expo run:android` | Builds a development version, installs it on a connected phone or emulator, and starts the bundler. |
+| `npx tsc --noEmit`     | Type-checks the phone app. |
+| `npx expo lint`        | Lints the phone app. |
+
+The phone app imports the settings, speech queue, resampler, protocol and language list from `client/src/` and
+`shared/`, so changes there affect both apps.
+
 ### Another speech recognizer, translator or voice
 
 To use another service, implement one of these interfaces and pass it to `createApp` in `server/src/index.ts`:
@@ -277,8 +371,9 @@ word. See `AUTO_DETECT_BASES` in `shared/languages.ts`.
 
 ## Roadmap
 
-- A native app wrapper, for example with Capacitor, to keep listening while the screen is locked and to choose the
-  audio output.
+- Test the phone app on real phones with Bluetooth earphones, and build it for iPhone.
+- An offline mode that recognizes and translates speech on the phone itself. See
+  [docs/on-device.md](docs/on-device.md).
 - Natural voices for the ten languages that don't have one yet.
 - More speech recognizers, through `SttProvider`.
 - PNG icons for the iOS home screen.

@@ -50,6 +50,11 @@ export function languageLabel(code: string): string {
   return native ? `${languageName(code)} · ${native}` : languageName(code);
 }
 
+/** "Portuguese (Brazil)" -> "Portuguese": the region matters for speech, not for reading. */
+export function plainLanguageName(code: string): string {
+  return languageName(code).replace(/ \(.*\)$/, '');
+}
+
 /** "DE", for tight spots. */
 export function shortLanguageLabel(code: string): string {
   return baseLanguage(code).toUpperCase();
