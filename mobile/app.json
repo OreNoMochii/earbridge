@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "EarBridge",
+    "slug": "earbridge",
+    "scheme": "earbridge",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "app.earbridge.mobile",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "EarBridge connects to the translation server on your network.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "app.earbridge.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      [
+        "react-native-audio-api",
+        {
+          "iosMicrophonePermission": "EarBridge listens to the conversation to translate it.",
+          "iosBackgroundMode": true,
+          "androidPermissions": [],
+          "androidForegroundService": false,
+          "disableFFmpeg": true
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "expo-localization"
+    ]
+  }
+}
