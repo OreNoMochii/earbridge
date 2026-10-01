@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { sanitizeName } from '../src/session.ts';
 import { TranslationRefusedError } from '../src/translate/types.ts';
+import { SpeechError } from '../src/voice/types.ts';
 import { connect, createDeps, settle } from './fakes.ts';
 
 const pcm = (bytes: number) => Buffer.alloc(bytes);
@@ -18,6 +19,7 @@ describe('solo conversation (one phone)', () => {
       mode: 'solo',
       autoDetect: true,
       speaker: 'auto',
+      voiceLangs: [],
     });
     assert.equal(stt.last.language, 'multi');
 
@@ -149,6 +151,161 @@ describe('solo conversation (one phone)', () => {
     client.session.close();
     await settle();
     assert.equal(client.of('translation').length, 0);
+  });
+});
+
+describe('natural voices', () => {
+  const audio = (lang: string, text: string) => Buffer.from(`${lang}:${text}`).toString('base64');
+
+  it('reads each finished translation aloud, after the text', async () => {
+    const { deps, stt, synthesizer } = createDeps();
+    const client = connect(deps);
+    client.send({ type: 'hello', mode: 'solo', myLang: 'en-US', theirLang: 'es', voiceLangs: ['en-US', 'es'] });
+    assert.deepEqual(client.of('ready')[0]?.voiceLangs, ['en-US', 'es']);
+
+    stt.last.say('¿Dónde está la estación?', ['es', 'es', 'es', 'es']);
+    stt.last.say('Is it far?', ['en', 'en', 'en']);
+    await settle();
+
+    const [theirs, mine] = client.of('utterance');
+    assert.deepEqual(client.of('speech'), [
+      { type: 'speech', id: theirs?.id, lang: 'en-US', audio: [audio('en-US', '[en-US] ¿Dónde está la estación?')] },
+      { type: 'speech', id: mine?.id, lang: 'es', audio: [audio('es', '[es] Is it far?')] },
+    ]);
+    // Each voice follows the text of its translation.
+    const translated = (id?: string) => client.messages.findIndex((m) => m.type === 'translation' && m.done && m.id === id);
+    const spoken = (id?: string) => client.messages.findIndex((m) => m.type === 'speech' && m.id === id);
+    for (const id of [theirs?.id, mine?.id]) assert.ok(translated(id) >= 0 && translated(id) < spoken(id));
+    assert.deepEqual(
+      synthesizer.requests.map((r) => [r.lang, r.text]),
+      [
+        ['en-US', '[en-US] ¿Dónde está la estación?'],
+        ['es', '[es] Is it far?'],
+      ],
+    );
+  });
+
+  it('only voices the languages asked for that have a voice', async () => {
+    const { deps, stt } = createDeps();
+    const client = connect(deps);
+    // No voice for Korean, and French is not in this conversation.
+    client.send({ type: 'hello', mode: 'solo', myLang: 'en-US', theirLang: 'ko', voiceLangs: ['ko', 'en-US', 'fr'] });
+    assert.deepEqual(client.of('ready')[0]?.voiceLangs, ['en-US']);
+
+    stt.last.say('만나서 반가워요');
+    await settle();
+    client.send({ type: 'speaker', speaker: 'me' });
+    stt.last.say('Nice to meet you too');
+    await settle();
+
+    assert.equal(client.of('translation').filter((m) => m.done).length, 2);
+    assert.deepEqual(
+      client.of('speech').map((m) => m.lang),
+      ['en-US'],
+    );
+  });
+
+  it('voices nothing when the phone asks for none or the server has no voices', async () => {
+    for (const [overrides, voiceLangs] of [
+      [{}, undefined],
+      [{}, 'en-US'],
+      [{ synthesizer: undefined }, ['en-US', 'es']],
+    ] as const) {
+      const { deps, stt, synthesizer } = createDeps(overrides);
+      const client = connect(deps);
+      client.send({ type: 'hello', mode: 'solo', myLang: 'en-US', theirLang: 'es', voiceLangs });
+      assert.deepEqual(client.of('ready')[0]?.voiceLangs, []);
+      stt.last.say('Hello', ['en']);
+      await settle();
+      assert.equal(client.of('translation').filter((m) => m.done).length, 1);
+      assert.equal(client.of('speech').length, 0);
+      assert.equal(synthesizer.requests.length, 0);
+    }
+  });
+
+  it('reports a failed voice, so the phone reads the translation itself', async () => {
+    const { deps, stt, synthesizer } = createDeps();
+    const client = connect(deps);
+    client.send({ type: 'hello', mode: 'solo', myLang: 'en-US', theirLang: 'es', voiceLangs: ['es'] });
+    synthesizer.failWith = new SpeechError('The voice service is busy.');
+    stt.last.say('Hello', ['en']);
+    await settle();
+    synthesizer.failWith = new Error('socket hang up');
+    stt.last.say('Hello again', ['en']);
+    await settle();
+
+    const [first, second] = client.of('utterance');
+    assert.deepEqual(client.of('speech'), [
+      { type: 'speech', id: first?.id, lang: 'es', audio: [], error: 'The voice service is busy.' },
+      { type: 'speech', id: second?.id, lang: 'es', audio: [], error: 'The voice failed.' },
+    ]);
+    assert.equal(client.of('translation').filter((m) => m.done).length, 2);
+    assert.equal(client.closed, false);
+  });
+
+  it('does not voice a failed translation', async () => {
+    const { deps, stt, translator, synthesizer } = createDeps();
+    const client = connect(deps);
+    client.send({ type: 'hello', mode: 'solo', myLang: 'en-US', theirLang: 'es', voiceLangs: ['es'] });
+    translator.failWith = new Error('socket hang up');
+    stt.last.say('Hello', ['en']);
+    await settle();
+    assert.equal(client.of('translation')[0]?.error, 'Translation failed.');
+    assert.equal(client.of('speech').length, 0);
+    assert.equal(synthesizer.requests.length, 0);
+  });
+
+  it('stops reading aloud once the phone disconnects', async () => {
+    const { deps, stt, synthesizer } = createDeps();
+    const client = connect(deps);
+    client.send({ type: 'hello', mode: 'solo', myLang: 'en-US', theirLang: 'es', voiceLangs: ['es'] });
+    const release = synthesizer.hold();
+    stt.last.say('Hello', ['en']);
+    await settle();
+    assert.equal(synthesizer.requests.length, 1);
+    client.session.close();
+    assert.equal(synthesizer.requests[0]?.signal?.aborted, true);
+    release();
+    await settle();
+    assert.equal(client.of('speech').length, 0);
+  });
+
+  it('reads room translations aloud once per language, for the listeners who want it', async () => {
+    const { deps, stt, synthesizer } = createDeps();
+    const join = (name: string, lang: string, room?: string, voiceLangs?: string[]) => {
+      const client = connect(deps);
+      client.send({ type: 'hello', mode: 'room', name, lang, room, voiceLangs });
+      return client;
+    };
+    const ann = join('Ann', 'en-US');
+    const code = ann.of('ready')[0]?.room;
+    const annStream = stt.last;
+    const bea = join('Bea', 'es', code, ['es']);
+    const carlos = join('Carlos', 'es', code);
+    const didier = join('Didier', 'fr', code, ['fr']);
+    const eun = join('Eun', 'ko', code, ['ko']);
+    const fede = join('Fede', 'es', code, ['es']);
+    assert.deepEqual(
+      [ann, bea, carlos, didier, eun, fede].map((client) => client.of('ready')[0]?.voiceLangs),
+      [[], ['es'], [], ['fr'], [], ['es']],
+    );
+
+    const release = synthesizer.hold();
+    annStream.say('Hello everyone');
+    await settle();
+    // Fede leaves while the voices are being made.
+    fede.session.close();
+    release();
+    await settle();
+
+    assert.deepEqual(synthesizer.requests.map((r) => r.lang).sort(), ['es', 'fr']);
+    const spoken = (client: typeof ann) => client.of('speech').map((m) => [m.lang, m.audio]);
+    assert.deepEqual(spoken(bea), [['es', [audio('es', '[es] Hello everyone')]]]);
+    assert.deepEqual(spoken(didier), [['fr', [audio('fr', '[fr] Hello everyone')]]]);
+    assert.deepEqual(spoken(carlos), [], 'did not ask for a voice');
+    assert.deepEqual(spoken(eun), [], 'no voice for Korean');
+    assert.deepEqual(spoken(fede), [], 'left');
+    assert.deepEqual(spoken(ann), []);
   });
 });
 

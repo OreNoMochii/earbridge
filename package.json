@@ -1,7 +1,7 @@
 {
   "name": "earbridge",
   "version": "0.1.0",
-  "description": "Live conversation translation for any earphones: speech recognition (Deepgram) + LLM translation (Claude) + speech in your ears.",
+  "description": "Live conversation translation for any earphones: speech recognition (Deepgram) + LLM translation and natural voices (DeepInfra) in your ears.",
   "private": true,
   "type": "module",
   "engines": {

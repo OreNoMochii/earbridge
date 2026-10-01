@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { languageLabel, nativeLanguageName, shortLanguageLabel } from '../src/language-names.ts';
-import { defaultSettings, loadSettings, matchLanguage, saveSettings } from '../src/settings.ts';
+import { defaultSettings, loadSettings, matchLanguage, saveSettings, voiceLanguages } from '../src/settings.ts';
 import type { KeyValueStore } from '../src/settings.ts';
 
 function memoryStore(initial: Record<string, string> = {}): KeyValueStore & { data: Record<string, string> } {
@@ -58,6 +58,7 @@ describe('settings', () => {
         name: '',
         talkMode: 'handsfree',
         output: 'earphones',
+        voice: 'natural',
         micId: '',
         token: '',
       },
@@ -73,6 +74,7 @@ describe('settings', () => {
       name: 'Sam',
       talkMode: 'hold' as const,
       output: 'speaker' as const,
+      voice: 'phone' as const,
       micId: 'abc',
       token: 'secret',
     };
@@ -89,6 +91,7 @@ describe('settings', () => {
         name: 'x'.repeat(100),
         talkMode: 42,
         output: null,
+        voice: 'robot',
       }),
     });
     const settings = loadSettings(store, ['fr-FR', 'it-IT']);
@@ -98,9 +101,18 @@ describe('settings', () => {
     assert.equal(settings.name.length, 40);
     assert.equal(settings.talkMode, 'handsfree');
     assert.equal(settings.output, 'earphones');
+    assert.equal(settings.voice, 'natural');
 
     assert.deepEqual(loadSettings(memoryStore({ 'earbridge.settings': '{oops' }), ['en-US']), defaultSettings(['en-US']));
     assert.deepEqual(loadSettings(memoryStore({ 'earbridge.settings': '[]' }), ['en-US']), defaultSettings(['en-US']));
+  });
+
+  it('asks for natural voices in the languages this phone reads aloud', () => {
+    const solo = { ...defaultSettings(['en-US']), myLang: 'en-US', theirLang: 'es' };
+    assert.deepEqual(voiceLanguages(solo), ['en-US']);
+    assert.deepEqual(voiceLanguages({ ...solo, output: 'speaker' }), ['en-US', 'es']);
+    assert.deepEqual(voiceLanguages({ ...solo, mode: 'room', output: 'speaker' }), ['en-US']);
+    assert.deepEqual(voiceLanguages({ ...solo, output: 'speaker', voice: 'phone' }), []);
   });
 
   it('works without storage', () => {

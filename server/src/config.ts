@@ -10,16 +10,30 @@ export class ConfigError extends Error {
   }
 }
 
+export type TranslationConfig =
+  | { provider: 'deepinfra'; apiKey: string; model: string }
+  | {
+      provider: 'claude';
+      model: string;
+      effort: Effort;
+      /** False when relying on an `ant auth login` profile instead of an API key. */
+      hasApiKey: boolean;
+    };
+
+/** Who reads translations aloud: natural voices from DeepInfra, or each phone's own voice. */
+export type VoiceConfig = { provider: 'deepinfra'; apiKey: string } | { provider: 'phone' };
+
+const TRANSLATION_PROVIDERS = ['deepinfra', 'claude'] as const;
+const VOICE_PROVIDERS = ['deepinfra', 'phone'] as const;
+
 export interface Config {
   port: number;
   deepgramApiKey: string;
   deepgramModel: string;
   /** Override for self-hosted or regional Deepgram endpoints. */
   deepgramUrl: string | undefined;
-  translationModel: string;
-  translationEffort: Effort;
-  /** False when relying on an `ant auth login` profile instead of an API key. */
-  hasAnthropicKey: boolean;
+  translation: TranslationConfig;
+  voice: VoiceConfig;
   accessToken: string | undefined;
   /** Extra origins allowed to open the WebSocket, e.g. behind a proxy that rewrites Host. */
   allowedOrigins: string[];
@@ -30,6 +44,53 @@ export interface Config {
 function read(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const value = env[name]?.trim();
   return value ? value : undefined;
+}
+
+/** The value of a setting that takes one of a few words, if it is set. */
+function readChoice<T extends string>(env: NodeJS.ProcessEnv, name: string, choices: readonly T[]): T | undefined {
+  const value = read(env, name);
+  if (value === undefined) return undefined;
+  const choice = choices.find((candidate) => candidate === value.toLowerCase());
+  if (!choice) throw new ConfigError(`${name} must be one of ${choices.join(', ')} (got "${value}").`);
+  return choice;
+}
+
+const DEEPINFRA_KEYS_URL = 'https://deepinfra.com/dash/api_keys';
+
+function readTranslation(env: NodeJS.ProcessEnv, deepinfraApiKey: string | undefined): TranslationConfig {
+  const hasAnthropicKey = Boolean(read(env, 'ANTHROPIC_API_KEY') ?? read(env, 'ANTHROPIC_AUTH_TOKEN'));
+  let provider = readChoice(env, 'TRANSLATION_PROVIDER', TRANSLATION_PROVIDERS);
+  if (!provider && deepinfraApiKey) provider = 'deepinfra';
+  if (!provider && hasAnthropicKey) provider = 'claude';
+  if (!provider) {
+    throw new ConfigError(
+      `No translation service is set up. Add DEEPINFRA_API_KEY to .env (${DEEPINFRA_KEYS_URL}). ` +
+        'To translate with Claude instead, set ANTHROPIC_API_KEY, or TRANSLATION_PROVIDER=claude after ' +
+        '`ant auth login`.',
+    );
+  }
+
+  const model = read(env, 'TRANSLATION_MODEL');
+  if (provider === 'deepinfra') {
+    if (!deepinfraApiKey) {
+      throw new ConfigError(`TRANSLATION_PROVIDER is deepinfra, but DEEPINFRA_API_KEY is not set (${DEEPINFRA_KEYS_URL}).`);
+    }
+    return { provider, apiKey: deepinfraApiKey, model: model ?? 'google/gemma-4-31B-it-turbo' };
+  }
+  const effort = readChoice(env, 'TRANSLATION_EFFORT', EFFORTS) ?? 'low';
+  return { provider, model: model ?? 'claude-opus-5', effort, hasApiKey: hasAnthropicKey };
+}
+
+function readVoice(env: NodeJS.ProcessEnv, deepinfraApiKey: string | undefined): VoiceConfig {
+  const provider = readChoice(env, 'VOICE', VOICE_PROVIDERS) ?? (deepinfraApiKey ? 'deepinfra' : 'phone');
+  if (provider === 'phone') return { provider };
+  if (!deepinfraApiKey) {
+    throw new ConfigError(
+      `VOICE is deepinfra, but DEEPINFRA_API_KEY is not set (${DEEPINFRA_KEYS_URL}). ` +
+        'Set VOICE=phone to have phones read translations with their own voice.',
+    );
+  }
+  return { provider, apiKey: deepinfraApiKey };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -47,10 +108,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new ConfigError(`PORT must be a number between 1 and 65535 (got "${portText}").`);
   }
 
-  const effort = read(env, 'TRANSLATION_EFFORT') ?? 'low';
-  if (!(EFFORTS as readonly string[]).includes(effort)) {
-    throw new ConfigError(`TRANSLATION_EFFORT must be one of ${EFFORTS.join(', ')} (got "${effort}").`);
-  }
+  const deepinfraApiKey = read(env, 'DEEPINFRA_API_KEY');
+  const translation = readTranslation(env, deepinfraApiKey);
+  const voice = readVoice(env, deepinfraApiKey);
 
   const certPath = read(env, 'TLS_CERT');
   const keyPath = read(env, 'TLS_KEY');
@@ -83,9 +143,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     deepgramApiKey,
     deepgramModel: read(env, 'DEEPGRAM_MODEL') ?? 'nova-3',
     deepgramUrl: read(env, 'DEEPGRAM_URL'),
-    translationModel: read(env, 'TRANSLATION_MODEL') ?? 'claude-opus-5',
-    translationEffort: effort as Effort,
-    hasAnthropicKey: Boolean(read(env, 'ANTHROPIC_API_KEY') ?? read(env, 'ANTHROPIC_AUTH_TOKEN')),
+    translation,
+    voice,
     accessToken: read(env, 'ACCESS_TOKEN'),
     allowedOrigins,
     tls,

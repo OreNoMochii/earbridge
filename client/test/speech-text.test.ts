@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { pickVoice, splitForSpeech } from '../src/speech-text.ts';
+import { splitForSpeech } from '../../shared/speech-text.ts';
+import { pickVoice } from '../src/speech-text.ts';
 import type { VoiceInfo } from '../src/speech-text.ts';
 
 function voice(name: string, lang: string, extra: Partial<VoiceInfo> = {}): VoiceInfo {

@@ -5,7 +5,9 @@ import { ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from '../../shared/room-code.ts'
 import { ConversationHistory } from './history.ts';
 import type { Logger } from './log.ts';
 import { deliverTranslation } from './translate/deliver.ts';
-import type { Translator } from './translate/types.ts';
+import type { TranslationRequest, Translator } from './translate/types.ts';
+import { deliverSpeech } from './voice/deliver.ts';
+import type { SpeechSynthesizer } from './voice/types.ts';
 
 export const MAX_ROOM_SIZE = 10;
 
@@ -13,7 +15,16 @@ export interface RoomMember {
   readonly id: string;
   readonly name: string;
   readonly lang: string;
+  /** Wants translations read aloud by a natural voice, which exists for their language. */
+  readonly voice: boolean;
   send(message: ServerMessage): void;
+}
+
+export interface RoomServices {
+  translator: Translator;
+  /** Natural voices, for members who want them. */
+  synthesizer?: SpeechSynthesizer | undefined;
+  log: Logger;
 }
 
 function generateRoomCode(): string {
@@ -29,16 +40,14 @@ function generateRoomCode(): string {
  */
 export class Room {
   readonly code: string;
-  private readonly translator: Translator;
-  private readonly log: Logger;
+  private readonly services: RoomServices;
   private readonly members = new Map<string, RoomMember>();
   private readonly history = new ConversationHistory();
   private inFlight = new AbortController();
 
-  constructor(code: string, translator: Translator, log: Logger) {
+  constructor(code: string, services: RoomServices) {
     this.code = code;
-    this.translator = translator;
-    this.log = log;
+    this.services = services;
   }
 
   get size(): number {
@@ -100,18 +109,30 @@ export class Room {
     }
 
     for (const [targetLang, listeners] of listenersByLang) {
-      void deliverTranslation(
-        this.translator,
-        { text, sourceLang: speaker.lang, targetLang, context, signal: this.inFlight.signal },
-        id,
-        (message) => {
-          for (const listener of listeners) {
-            if (this.isMember(listener)) listener.send(message);
-          }
-        },
-        this.log,
-      );
+      void this.translate(id, listeners, { text, sourceLang: speaker.lang, targetLang, context });
     }
+  }
+
+  /**
+   * Translates once for everyone listening in one language, then has a natural voice read
+   * the translation for those of them who want one.
+   */
+  private async translate(
+    id: string,
+    listeners: readonly RoomMember[],
+    request: Omit<TranslationRequest, 'onPartial' | 'signal'>,
+  ): Promise<void> {
+    const { translator, synthesizer, log } = this.services;
+    const signal = this.inFlight.signal;
+    const sendTo = (members: readonly RoomMember[]) => (message: ServerMessage) => {
+      for (const member of members) {
+        if (this.isMember(member)) member.send(message);
+      }
+    };
+    const translation = await deliverTranslation(translator, { ...request, signal }, id, sendTo(listeners), log);
+    const voiced = listeners.filter((listener) => listener.voice && this.isMember(listener));
+    if (!translation || !synthesizer || voiced.length === 0) return;
+    await deliverSpeech(synthesizer, { text: translation, lang: request.targetLang, signal }, id, sendTo(voiced), log);
   }
 
   private isMember(member: RoomMember): boolean {
@@ -127,25 +148,21 @@ export type JoinResult =
   | { ok: true; room: Room }
   | { ok: false; error: string; code?: ErrorCode };
 
-export interface RoomRegistryOptions {
-  translator: Translator;
-  log: Logger;
+export interface RoomRegistryOptions extends RoomServices {
   /** How long an empty room stays joinable, e.g. while someone's phone reconnects. */
   emptyRoomTtlMs?: number;
   maxRooms?: number;
 }
 
 export class RoomRegistry {
-  private readonly translator: Translator;
-  private readonly log: Logger;
+  private readonly services: RoomServices;
   private readonly emptyRoomTtlMs: number;
   private readonly maxRooms: number;
   private readonly rooms = new Map<string, Room>();
   private readonly expiries = new Map<string, NodeJS.Timeout>();
 
   constructor(options: RoomRegistryOptions) {
-    this.translator = options.translator;
-    this.log = options.log;
+    this.services = { translator: options.translator, synthesizer: options.synthesizer, log: options.log };
     this.emptyRoomTtlMs = options.emptyRoomTtlMs ?? 10 * 60_000;
     this.maxRooms = options.maxRooms ?? 1_000;
   }
@@ -162,7 +179,7 @@ export class RoomRegistry {
     do code = generateRoomCode();
     while (this.rooms.has(code));
 
-    const room = new Room(code, this.translator, this.log);
+    const room = new Room(code, this.services);
     this.rooms.set(code, room);
     room.add(member);
     return { ok: true, room };

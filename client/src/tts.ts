@@ -2,7 +2,8 @@
 // wherever the phone sends it: the connected earphones, or else the speaker.
 
 import { baseLanguage, languageName } from '../../shared/languages.ts';
-import { pickVoice, splitForSpeech } from './speech-text.ts';
+import { splitForSpeech } from '../../shared/speech-text.ts';
+import { pickVoice } from './speech-text.ts';
 
 const CJK = new Set(['zh', 'ja', 'ko']);
 

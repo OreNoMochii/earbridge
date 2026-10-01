@@ -7,13 +7,18 @@ import type { Logger } from './log.ts';
 import { UtteranceSegmenter } from './stt/segmenter.ts';
 import type { SttProvider, SttStream } from './stt/types.ts';
 import { deliverTranslation } from './translate/deliver.ts';
-import type { Translator } from './translate/types.ts';
+import type { TranslationRequest, Translator } from './translate/types.ts';
+import { deliverSpeech } from './voice/deliver.ts';
+import type { SpeechSynthesizer } from './voice/types.ts';
 
 export interface SoloOptions {
   myLang: string;
   theirLang: string;
+  /** Translations into these languages are also read aloud by `synthesizer`. */
+  voiceLangs: readonly string[];
   stt: SttProvider;
   translator: Translator;
+  synthesizer: SpeechSynthesizer | undefined;
   send(message: ServerMessage): void;
   /** Speech recognition failed for good; the conversation cannot continue. */
   onFatal(error: Error): void;
@@ -143,14 +148,19 @@ export class SoloConversation {
     const context = this.history.recent();
     this.history.add({ speaker: speakerId === SOLO_ME ? 'Person A' : 'Person B', lang: sourceLang, text });
 
-    void deliverTranslation(
-      this.options.translator,
-      { text, sourceLang, targetLang, context, signal: this.translations.signal },
-      id,
-      (message) => {
-        if (!this.closed) this.options.send(message);
-      },
-      this.options.log,
-    );
+    void this.translate(id, { text, sourceLang, targetLang, context });
+  }
+
+  /** Translates an utterance, then has a natural voice read the translation if wanted. */
+  private async translate(id: string, request: Omit<TranslationRequest, 'onPartial' | 'signal'>): Promise<void> {
+    const { translator, synthesizer, voiceLangs, log } = this.options;
+    const signal = this.translations.signal;
+    const send = (message: ServerMessage) => {
+      if (!this.closed) this.options.send(message);
+    };
+    const translation = await deliverTranslation(translator, { ...request, signal }, id, send, log);
+    if (translation && synthesizer && voiceLangs.includes(request.targetLang)) {
+      await deliverSpeech(synthesizer, { text: translation, lang: request.targetLang, signal }, id, send, log);
+    }
   }
 }

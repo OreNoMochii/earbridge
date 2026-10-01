@@ -24,6 +24,11 @@ export interface HelloSolo {
   mode: 'solo';
   myLang: string;
   theirLang: string;
+  /**
+   * Languages to read aloud with the server's natural voices (if it has them), not the
+   * phone's own voice. The server answers with the ones it can do in `ready`.
+   */
+  voiceLangs?: string[];
   token?: string;
 }
 
@@ -34,6 +39,11 @@ export interface HelloRoom {
   name: string;
   /** Join this room; omit to create a new one. */
   room?: string;
+  /**
+   * Languages to read aloud with the server's natural voices (if it has them), not the
+   * phone's own voice. The server answers with the ones it can do in `ready`.
+   */
+  voiceLangs?: string[];
   token?: string;
 }
 
@@ -63,6 +73,8 @@ export type ServerMessage =
       /** solo: whether automatic speaker detection is available for this language pair */
       autoDetect: boolean;
       speaker?: SpeakerSelection;
+      /** Each finished translation into one of these languages is followed by a `speech` message. */
+      voiceLangs: string[];
     }
   | { type: 'participants'; participants: Participant[] }
   /** Live, not-yet-final transcript of what someone is saying. */
@@ -85,6 +97,12 @@ export type ServerMessage =
       done: boolean;
       error?: string;
     }
+  /**
+   * A finished translation read aloud by a natural voice: base64-encoded audio clips (such
+   * as MP3) to play one after the other. With an `error` there is no audio, and the phone's
+   * own voice should read the translation instead.
+   */
+  | { type: 'speech'; id: string; lang: string; audio: string[]; error?: string }
   | { type: 'status'; stt: 'connecting' | 'live' | 'reconnecting' }
   /** A fatal error ends the session; the server closes the socket right after it. */
   | { type: 'error'; message: string; fatal: boolean; code?: ErrorCode };

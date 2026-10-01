@@ -9,6 +9,7 @@ import { SoloConversation } from './solo.ts';
 import { UtteranceSegmenter } from './stt/segmenter.ts';
 import type { SttProvider, SttStream } from './stt/types.ts';
 import type { Translator } from './translate/types.ts';
+import type { SpeechSynthesizer } from './voice/types.ts';
 
 export interface Transport {
   send(message: ServerMessage): void;
@@ -19,6 +20,8 @@ export interface Transport {
 export interface SessionDeps {
   stt: SttProvider;
   translator: Translator;
+  /** Natural voices; without one, phones read translations with their own voice. */
+  synthesizer: SpeechSynthesizer | undefined;
   rooms: RoomRegistry;
   /** When set, clients must present this shared secret in their hello message. */
   accessToken: string | undefined;
@@ -132,12 +135,15 @@ export class ClientSession {
       return;
     }
 
+    const voiceLangs = this.voiceLangs(message['voiceLangs'], [myLang, theirLang]);
     this.started = true;
     this.solo = new SoloConversation({
       myLang,
       theirLang,
+      voiceLangs,
       stt: this.deps.stt,
       translator: this.deps.translator,
+      synthesizer: this.deps.synthesizer,
       send: (m) => this.send(m),
       onFatal: (error) => this.fail(error.message),
       log: this.deps.log,
@@ -148,6 +154,7 @@ export class ClientSession {
       mode: 'solo',
       autoDetect: this.solo.autoDetect,
       speaker: this.solo.speaker,
+      voiceLangs,
     });
     this.solo.start();
   }
@@ -167,10 +174,12 @@ export class ClientSession {
       }
     }
 
+    const voiceLangs = this.voiceLangs(message['voiceLangs'], [lang]);
     const member: RoomMember = {
       id: this.id,
       name: sanitizeName(message['name']),
       lang,
+      voice: voiceLangs.length > 0,
       send: (m) => this.send(m),
     };
     const result = code ? this.deps.rooms.join(code, member) : this.deps.rooms.create(member);
@@ -182,7 +191,7 @@ export class ClientSession {
     const room = result.room;
     this.started = true;
     this.room = room;
-    this.send({ type: 'ready', clientId: this.id, mode: 'room', room: room.code, autoDetect: false });
+    this.send({ type: 'ready', clientId: this.id, mode: 'room', room: room.code, autoDetect: false, voiceLangs });
     room.announce();
 
     // In a room each phone's microphone only has to capture its own wearer, whose
@@ -208,6 +217,13 @@ export class ClientSession {
         onClosed: () => segmenter.flush(),
       },
     );
+  }
+
+  /** The requested languages that will be read aloud by a natural voice. */
+  private voiceLangs(requested: unknown, listening: readonly string[]): string[] {
+    const { synthesizer } = this.deps;
+    if (!synthesizer || !Array.isArray(requested)) return [];
+    return listening.filter((lang) => requested.includes(lang) && synthesizer.supports(lang));
   }
 
   private speaker(selection: unknown): void {

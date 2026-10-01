@@ -7,7 +7,7 @@ import { listMicrophones } from './audio/mic.ts';
 import { h } from './dom.ts';
 import { languageLabel } from './language-names.ts';
 import { MAX_NAME_LENGTH } from './settings.ts';
-import type { Output, Settings, TalkMode } from './settings.ts';
+import type { Output, Settings, TalkMode, Voice } from './settings.ts';
 
 export interface SetupError {
   message: string;
@@ -187,6 +187,13 @@ export function renderSetup(options: SetupOptions): SetupView {
     { id: 'mic', onchange: () => update({ micId: micSelect.value }) },
     h('option', { value: '' }, 'Default'),
   );
+  const voiceSelect = h(
+    'select',
+    { id: 'voice', onchange: () => update({ voice: voiceSelect.value as Voice }) },
+    h('option', { value: 'natural' }, 'Natural voice'),
+    h('option', { value: 'phone' }, 'The phone’s own voice'),
+  );
+  voiceSelect.value = settings.voice;
   const tokenInput = h('input', {
     id: 'token',
     type: 'password',
@@ -205,6 +212,12 @@ export function renderSetup(options: SetupOptions): SetupView {
       'p',
       { class: 'hint' },
       'With one phone, the phone’s own microphone usually works best: it hears you both, and Bluetooth earphones keep their full sound quality. In a room, use the earphones’ microphone.',
+    ),
+    field('voice', 'Voice', voiceSelect),
+    h(
+      'p',
+      { class: 'hint' },
+      'The natural voice sounds more human and takes a moment longer. Languages it doesn’t speak are read by the phone’s own voice.',
     ),
     field('token', 'Access code', tokenInput),
     h('p', { class: 'hint' }, 'Only if the person running this server gave you one.'),
@@ -264,7 +277,7 @@ export function renderSetup(options: SetupOptions): SetupView {
     h(
       'p',
       { class: 'privacy' },
-      'Your voice goes through this app’s server to Deepgram for speech recognition, and the text to Anthropic’s Claude for translation. This app stores nothing.',
+      'Your voice goes through this app’s server to Deepgram for speech recognition. The text goes to DeepInfra for translation and natural voices (a server can be set up to translate with Anthropic’s Claude instead). This app stores nothing.',
     ),
   );
 

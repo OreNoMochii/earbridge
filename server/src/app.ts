@@ -11,10 +11,13 @@ import { RoomRegistry } from './rooms.ts';
 import { ClientSession } from './session.ts';
 import type { SttProvider } from './stt/types.ts';
 import type { Translator } from './translate/types.ts';
+import type { SpeechSynthesizer } from './voice/types.ts';
 
 export interface AppOptions {
   stt: SttProvider;
   translator: Translator;
+  /** Natural voices; without one, phones read translations with their own voice. */
+  synthesizer?: SpeechSynthesizer | undefined;
   log: Logger;
   staticDir: string;
   accessToken?: string | undefined;
@@ -38,7 +41,7 @@ export function createApp(options: AppOptions): App {
   const server: Server = options.tls
     ? (createHttpsServer(options.tls, handler) as unknown as Server)
     : createHttpServer(handler);
-  const rooms = new RoomRegistry({ translator: options.translator, log });
+  const rooms = new RoomRegistry({ translator: options.translator, synthesizer: options.synthesizer, log });
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
   const allowedOrigins = new Set(options.allowedOrigins ?? []);
   const heartbeatMs = options.heartbeatMs ?? 30_000;
@@ -66,6 +69,7 @@ export function createApp(options: AppOptions): App {
       {
         stt: options.stt,
         translator: options.translator,
+        synthesizer: options.synthesizer,
         rooms,
         accessToken: options.accessToken,
         log,

@@ -5,6 +5,7 @@ import { ClientSession } from '../src/session.ts';
 import type { SessionDeps } from '../src/session.ts';
 import type { SttEvents, SttProvider, SttStream, SttStreamOptions } from '../src/stt/types.ts';
 import type { TranslationRequest, Translator } from '../src/translate/types.ts';
+import type { SpeechRequest, SpeechSynthesizer } from '../src/voice/types.ts';
 
 export class FakeSttStream implements SttStream {
   readonly language: string;
@@ -77,6 +78,39 @@ export class FakeTranslator implements Translator {
   }
 }
 
+/** Has a voice for a few languages, and "reads" text as the clip "lang:text". */
+export class FakeSynthesizer implements SpeechSynthesizer {
+  readonly languages: ReadonlySet<string>;
+  readonly requests: SpeechRequest[] = [];
+  failWith: Error | undefined;
+  private held: Promise<void> | undefined;
+
+  constructor(languages: Iterable<string> = ['en-US', 'es', 'fr', 'de']) {
+    this.languages = new Set(languages);
+  }
+
+  supports(lang: string): boolean {
+    return this.languages.has(lang);
+  }
+
+  /** Keeps the voice from finishing until the returned function is called. */
+  hold(): () => void {
+    let release!: () => void;
+    this.held = new Promise((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
+
+  async synthesize(request: SpeechRequest): Promise<Buffer[]> {
+    this.requests.push(request);
+    const failure = this.failWith;
+    await (this.held ?? Promise.resolve());
+    if (failure) throw failure;
+    return [Buffer.from(`${request.lang}:${request.text}`)];
+  }
+}
+
 export interface TestClient {
   session: ClientSession;
   messages: ServerMessage[];
@@ -88,15 +122,17 @@ export interface TestClient {
 export function createDeps(overrides: Partial<SessionDeps> = {}) {
   const stt = new FakeSttProvider();
   const translator = new FakeTranslator();
+  const synthesizer = new FakeSynthesizer();
   const deps: SessionDeps = {
     stt,
     translator,
-    rooms: new RoomRegistry({ translator, log: silentLogger }),
+    synthesizer,
+    rooms: new RoomRegistry({ translator, synthesizer, log: silentLogger }),
     accessToken: undefined,
     log: silentLogger,
     ...overrides,
   };
-  return { deps, stt, translator };
+  return { deps, stt, translator, synthesizer };
 }
 
 export function connect(deps: SessionDeps): TestClient {

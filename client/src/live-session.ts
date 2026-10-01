@@ -10,9 +10,12 @@ import { Connection } from './connection.ts';
 import type { ConnectionState, EndReason } from './connection.ts';
 import { LiveView } from './live-view.ts';
 import type { HoldTarget, StatusTone } from './live-view.ts';
+import { voiceLanguages } from './settings.ts';
 import type { Settings } from './settings.ts';
 import { OrderedSpeechQueue } from './speech-queue.ts';
+import type { SpeechItem } from './speech-queue.ts';
 import type { SpeechOutput } from './tts.ts';
+import { VoicePlayer } from './voice-player.ts';
 import { ScreenWakeLock } from './wake-lock.ts';
 
 /** After the phone speaker stops, its echo in the room takes a moment to die down. */
@@ -24,6 +27,7 @@ type ReadyMessage = Extract<ServerMessage, { type: 'ready' }>;
 type InterimMessage = Extract<ServerMessage, { type: 'interim' }>;
 type UtteranceMessage = Extract<ServerMessage, { type: 'utterance' }>;
 type TranslationMessage = Extract<ServerMessage, { type: 'translation' }>;
+type SpeechMessage = Extract<ServerMessage, { type: 'speech' }>;
 
 export interface LiveSessionOptions {
   settings: Settings;
@@ -45,6 +49,7 @@ export class LiveSession {
   private readonly settings: Settings;
   private readonly view: LiveView;
   private readonly queue: OrderedSpeechQueue;
+  private readonly voice: VoicePlayer;
   private readonly wakeLock = new ScreenWakeLock();
   private mic: Microphone | undefined;
   private connection: Connection | undefined;
@@ -75,6 +80,11 @@ export class LiveSession {
   private readonly toSpeak = new Set<string>();
   /** One-phone mode: my utterances, whose translations are shown to the other person. */
   private readonly forPartner = new Set<string>();
+  /** Languages the server reads aloud with a natural voice. */
+  private voiced: ReadonlySet<string> = new Set();
+  /** Finished translations waiting for their natural voice, by utterance id. */
+  private readonly awaitingVoice = new Map<string, SpeechItem>();
+  private readonly voiceWarnings = new Set<string>();
 
   constructor(options: LiveSessionOptions) {
     this.options = options;
@@ -90,8 +100,9 @@ export class LiveSession {
       onSpeakerSelect: (selection) => this.selectSpeaker(selection),
       onHoldChange: (target, pressed) => this.setHolding(target, pressed),
     });
+    this.voice = new VoicePlayer(options.context);
     this.queue = new OrderedSpeechQueue({
-      speak: (item) => options.speech.speak(item.text, item.lang),
+      speak: (item) => this.speak(item),
       onSpeakingChange: (speaking) => this.setSpeaking(speaking),
     });
   }
@@ -165,6 +176,8 @@ export class LiveSession {
     this.mic?.stop();
     this.connection?.stop();
     this.queue.clear();
+    this.awaitingVoice.clear();
+    this.voice.cancel();
     this.options.speech.cancel();
     this.options.speech.onWarning = undefined;
     this.wakeLock.stop();
@@ -178,12 +191,13 @@ export class LiveSession {
   private hello(): ClientMessage {
     const { settings } = this;
     const token = settings.token.trim() || undefined;
+    const voiceLangs = voiceLanguages(settings);
     if (settings.mode === 'solo') {
-      return { type: 'hello', mode: 'solo', myLang: settings.myLang, theirLang: settings.theirLang, token };
+      return { type: 'hello', mode: 'solo', myLang: settings.myLang, theirLang: settings.theirLang, voiceLangs, token };
     }
     // After a reconnection, go back to the same room.
     const room = this.roomCode ?? this.options.room;
-    return { type: 'hello', mode: 'room', lang: settings.myLang, name: settings.name, room, token };
+    return { type: 'hello', mode: 'room', lang: settings.myLang, name: settings.name, room, voiceLangs, token };
   }
 
   private handle(message: ServerMessage): void {
@@ -203,6 +217,9 @@ export class LiveSession {
       case 'translation':
         this.onTranslation(message);
         break;
+      case 'speech':
+        this.onSpeech(message);
+        break;
       case 'status':
         // "connecting" also follows every switch of speaker, which is not worth
         // announcing; only the first one counts (see onReady).
@@ -218,6 +235,7 @@ export class LiveSession {
   private onReady(message: ReadyMessage): void {
     this.myIds.add(message.clientId);
     this.recognizer = 'starting';
+    this.voiced = new Set(message.voiceLangs ?? []);
     this.announceChanges = false;
 
     if (message.mode === 'solo') {
@@ -315,14 +333,54 @@ export class LiveSession {
       if (message.done) this.forPartner.delete(message.id);
     }
     if (!message.done || !this.toSpeak.delete(message.id)) return;
-    if (message.text && !message.error) this.queue.ready({ id: message.id, text: message.text, lang: message.lang });
-    else this.queue.skip(message.id);
+    if (!message.text || message.error) {
+      this.queue.skip(message.id);
+      return;
+    }
+    const item = { id: message.id, text: message.text, lang: message.lang };
+    // A natural voice follows in a `speech` message.
+    if (this.voiced.has(message.lang)) this.awaitingVoice.set(message.id, item);
+    else this.queue.ready(item);
+  }
+
+  private onSpeech(message: SpeechMessage): void {
+    const item = this.awaitingVoice.get(message.id);
+    if (!item) return;
+    this.awaitingVoice.delete(message.id);
+    if (message.audio.length > 0) {
+      this.queue.ready({ ...item, audio: message.audio });
+      return;
+    }
+    if (message.error) this.warnVoice(`${message.error} The phone’s own voice reads instead.`);
+    this.queue.ready(item);
+  }
+
+  /** Reads a translation aloud: with the natural voice if there is one, else the phone's own. */
+  private async speak(item: SpeechItem): Promise<void> {
+    if (item.audio) {
+      try {
+        await this.voice.play(item.audio);
+        return;
+      } catch {
+        this.warnVoice('This phone could not play the natural voice, so its own voice reads instead.');
+      }
+    }
+    if (!this.ended) await this.options.speech.speak(item.text, item.lang);
+  }
+
+  private warnVoice(message: string): void {
+    if (this.voiceWarnings.has(message)) return;
+    this.voiceWarnings.add(message);
+    this.view.toast(message);
   }
 
   private setConnectionState(state: ConnectionState): void {
     this.connectionState = state;
     if (state !== 'ready') {
       // The server-side session is gone, and with it every translation in progress.
+      // Translations already here are read by the phone's own voice instead.
+      for (const item of this.awaitingVoice.values()) this.queue.ready(item);
+      this.awaitingVoice.clear();
       this.queue.skipPending();
       this.toSpeak.clear();
       this.forPartner.clear();
@@ -356,7 +414,10 @@ export class LiveSession {
       if (target !== 'room') this.selectSpeaker(target);
       // Do not talk over the person talking.
       this.queue.setPaused(true);
-      if (this.settings.output === 'speaker') this.options.speech.cancel();
+      if (this.settings.output === 'speaker') {
+        this.voice.cancel();
+        this.options.speech.cancel();
+      }
     } else {
       if (this.holding !== target) return;
       this.holding = undefined;

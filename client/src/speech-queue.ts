@@ -5,6 +5,8 @@ export interface SpeechItem {
   id: string;
   text: string;
   lang: string;
+  /** A natural voice reading the text, as base64 audio clips. Without it, the phone's own voice reads. */
+  audio?: readonly string[];
 }
 
 export interface SpeechQueueOptions {

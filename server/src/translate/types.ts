@@ -1,4 +1,4 @@
-// Provider-neutral translation interface. Claude is the bundled implementation.
+// Provider-neutral translation interface. DeepInfra and Claude are the bundled implementations.
 
 export interface ContextLine {
   speaker: string;

@@ -14,6 +14,12 @@ export type TalkMode = 'handsfree' | 'hold';
  */
 export type Output = 'earphones' | 'speaker';
 
+/**
+ * natural: the server's natural voices read translations, where they speak the language.
+ * phone:   the phone's own voice reads every translation.
+ */
+export type Voice = 'natural' | 'phone';
+
 export interface Settings {
   mode: Mode;
   /** My language, in both modes. */
@@ -24,6 +30,7 @@ export interface Settings {
   name: string;
   talkMode: TalkMode;
   output: Output;
+  voice: Voice;
   /** Microphone deviceId, or '' for the system default. */
   micId: string;
   /** Access code, for servers that require one. */
@@ -70,6 +77,7 @@ export function defaultSettings(browserLanguages: readonly string[]): Settings {
     name: '',
     talkMode: 'handsfree',
     output: 'earphones',
+    voice: 'natural',
     micId: '',
     token: '',
   };
@@ -103,9 +111,18 @@ export function loadSettings(store: KeyValueStore | undefined, browserLanguages:
     name: text(saved['name'], MAX_NAME_LENGTH),
     talkMode: oneOf(saved['talkMode'], ['handsfree', 'hold'], defaults.talkMode),
     output: oneOf(saved['output'], ['earphones', 'speaker'], defaults.output),
+    voice: oneOf(saved['voice'], ['natural', 'phone'], defaults.voice),
     micId: text(saved['micId'], 500),
     token: text(saved['token'], 500),
   };
+}
+
+/** The languages to ask the server's natural voices for: those this phone reads aloud. */
+export function voiceLanguages(settings: Settings): string[] {
+  if (settings.voice === 'phone') return [];
+  // With one phone and earphones, my words are shown to the other person, not read aloud.
+  if (settings.mode === 'solo' && settings.output === 'speaker') return [settings.myLang, settings.theirLang];
+  return [settings.myLang];
 }
 
 export function saveSettings(store: KeyValueStore | undefined, settings: Settings): void {

@@ -3,9 +3,9 @@
 Live conversation translation for **any** earphones: AirPods, other Bluetooth buds, or wired ones.
 
 Apple built live translation into AirPods. EarBridge does the same for any earphones. It is a web app: open it in
-your phone's browser, put your earphones in and talk. Deepgram turns speech into text, Claude translates it, and the
-phone's built-in voice reads the translation into your ears. The earphones need nothing special, because the app uses
-whatever microphone and audio output the phone is already using.
+your phone's browser, put your earphones in and talk. Deepgram turns speech into text, a language model on DeepInfra
+translates it, and a natural-sounding voice, also from DeepInfra, reads the translation into your ears. The earphones
+need nothing special, because the app uses whatever microphone and audio output the phone is already using.
 
 ## How it works
 
@@ -14,19 +14,20 @@ whatever microphone and audio output the phone is already using.
 ┌──────────────────────────┐  WebSocket  ┌──────────────────────────┐
 │ microphone → 16 kHz PCM  │ ──────────► │ one session per phone    │ ──► Deepgram: streaming speech-to-text
 │                          │             │ rooms, recent context    │
-│ transcript + translation │ ◄────────── │                          │ ──► Claude: translation, streamed
-│ spoken → your earphones  │    text     └──────────────────────────┘
-└──────────────────────────┘
+│ transcript + translation │ ◄────────── │                          │ ──► DeepInfra: translation, streamed
+│ voice → your earphones   │ text, audio │                          │ ──► DeepInfra: natural voices
+└──────────────────────────┘             └──────────────────────────┘
 ```
 
 1. The phone streams its microphone to the relay server as 16 kHz audio over a WebSocket.
 2. The relay forwards the audio to Deepgram. Deepgram sends back a live transcript and marks where each sentence ends.
-3. Each finished sentence goes to Claude, along with the last few lines of the conversation to help with names,
-   pronouns and misheard words. The translation streams back to the phones as Claude writes it.
-4. Each phone reads the translation aloud in its listener's language with the phone's text-to-speech. The sound goes
-   wherever the phone is playing sound, which is your earphones.
+3. Each finished sentence goes to a language model on DeepInfra, along with the last few lines of the conversation to
+   help with names, pronouns and misheard words. The translation streams back to the phones as the model writes it.
+4. A text-to-speech model on DeepInfra reads the finished translation in the listener's language, and the phone plays
+   the audio. The sound goes wherever the phone is playing sound, which is your earphones.
 
-The API keys stay on the relay server. The browser never sees them.
+The API keys stay on the relay server. The browser never sees them. Anthropic's Claude can translate instead of
+DeepInfra; see [Configuration](#configuration).
 
 ## Two ways to use it
 
@@ -61,6 +62,21 @@ a call.
 | Listening | **In my earphones**: you hear the translations of the other person, or of the others in a room. |
 |           | **On the phone speaker**: the phone reads translations aloud, for when nobody wears earphones. The microphone pauses while the phone speaks, so the app does not translate its own voice. |
 
+### Voices
+
+Natural-sounding voices from DeepInfra read the translations in 24 of the 34 languages:
+
+- **Kokoro:** English (US and UK), Spanish, French, Hindi, Italian, Japanese, Brazilian Portuguese and Chinese.
+- **Chatterbox:** Arabic, Danish, Dutch, Finnish, German, Greek, Korean, Malay, Norwegian, Polish, European Portuguese,
+  Russian, Swedish and Turkish.
+
+The phone's own voice reads the other ten: Bulgarian, Catalan, Czech, Hungarian, Indonesian, Romanian, Slovak, Thai,
+Ukrainian and Vietnamese. It also steps in when a natural voice fails or takes longer than 6 seconds, so you still
+hear the translation, and a short notice says why.
+
+The natural voice usually starts about a second after the translation is finished. To use the phone's own voice for
+everything, which starts sooner but sounds more robotic, open **Advanced → Voice**.
+
 ## Which microphone?
 
 The app uses whichever microphone the phone gives it. To choose one yourself, open **Advanced → Microphone**.
@@ -81,13 +97,13 @@ and a web app cannot change it.
 You need:
 
 - Node.js 22.18 or newer.
-- A [Deepgram](https://console.deepgram.com) API key.
-- An [Anthropic](https://platform.claude.com) API key. Instead of a key, you can log in with `ant auth login`.
+- A [Deepgram](https://console.deepgram.com) API key, for speech recognition.
+- A [DeepInfra](https://deepinfra.com/dash/api_keys) API key, for translation and voices.
 - A computer and a phone on the same Wi-Fi network.
 
 ```sh
 npm install
-cp .env.example .env    # then add DEEPGRAM_API_KEY and ANTHROPIC_API_KEY
+cp .env.example .env    # then add DEEPGRAM_API_KEY and DEEPINFRA_API_KEY
 npm run dev
 ```
 
@@ -130,23 +146,34 @@ stays open for 10 minutes, so people can rejoin.
 
 Set these in `.env`, or in the server's environment.
 
-| Variable             | Default                             | Description |
-|----------------------|-------------------------------------|-------------|
-| `DEEPGRAM_API_KEY`   | *(required)*                        | Deepgram key, for speech recognition. |
-| `ANTHROPIC_API_KEY`  |                                     | Claude key. Optional after `ant auth login`. `ANTHROPIC_AUTH_TOKEN` also works. |
-| `TRANSLATION_MODEL`  | `claude-opus-5`                     | Claude model that translates. |
-| `TRANSLATION_EFFORT` | `low`                               | `low`, `medium`, `high`, `xhigh` or `max`. Lower is faster, and `low` suits live conversation. |
-| `DEEPGRAM_MODEL`     | `nova-3`                            | Switches to `nova-2` on its own for languages `nova-3` doesn't support. |
-| `DEEPGRAM_URL`       | `wss://api.deepgram.com/v1/listen`  | Change it for a regional or self-hosted Deepgram endpoint. |
-| `PORT`               | `8787`                              | Port the server listens on. |
-| `ACCESS_TOKEN`       |                                     | Shared secret that people must enter to use the server. |
-| `TLS_CERT`, `TLS_KEY`|                                     | Paths to a PEM certificate and key, to serve HTTPS directly. Set both or neither. |
-| `ALLOWED_ORIGINS`    |                                     | Extra page origins allowed to open the WebSocket, separated by commas. |
+| Variable               | Default                             | Description |
+|------------------------|-------------------------------------|-------------|
+| `DEEPGRAM_API_KEY`     | *(required)*                        | Deepgram key, for speech recognition. |
+| `DEEPINFRA_API_KEY`    |                                     | DeepInfra key, for translation and natural voices. |
+| `TRANSLATION_PROVIDER` | `deepinfra`                         | `deepinfra` or `claude`. If it is not set, the server uses DeepInfra when `DEEPINFRA_API_KEY` is set, and Claude when only `ANTHROPIC_API_KEY` is. |
+| `TRANSLATION_MODEL`    | `google/gemma-4-31B-it-turbo`       | The model that translates: a chat model on DeepInfra, or with Claude, a Claude model (default `claude-opus-5`). |
+| `VOICE`                | `deepinfra`                         | `deepinfra` for natural voices, or `phone` for each phone's own voice. Without `DEEPINFRA_API_KEY`, it is `phone`. |
+| `ANTHROPIC_API_KEY`    |                                     | Claude key, to translate with Claude. Optional after `ant auth login`. `ANTHROPIC_AUTH_TOKEN` also works. |
+| `TRANSLATION_EFFORT`   | `low`                               | Claude only: `low`, `medium`, `high`, `xhigh` or `max`. Lower is faster, and `low` suits live conversation. |
+| `DEEPGRAM_MODEL`       | `nova-3`                            | Switches to `nova-2` on its own for languages `nova-3` doesn't support. |
+| `DEEPGRAM_URL`         | `wss://api.deepgram.com/v1/listen`  | Change it for a regional or self-hosted Deepgram endpoint. |
+| `PORT`                 | `8787`                              | Port the server listens on. |
+| `ACCESS_TOKEN`         |                                     | Shared secret that people must enter to use the server. |
+| `TLS_CERT`, `TLS_KEY`  |                                     | Paths to a PEM certificate and key, to serve HTTPS directly. Set both or neither. |
+| `ALLOWED_ORIGINS`      |                                     | Extra page origins allowed to open the WebSocket, separated by commas. |
 
-**Refusal fallbacks are on.** Translation requests use the `server-side-fallback-2026-07-01` beta with
-`fallbacks: 'default'`. If a safety classifier declines a sentence, the API runs the request again on Anthropic's
-recommended fallback model instead of returning a refusal. If that is declined too, the app shows *"The translation
-service declined to translate this utterance."*
+The server refuses to start without a way to translate: set `DEEPINFRA_API_KEY`, or set up Claude. When it starts, it
+logs which services it uses.
+
+**Kokoro voices use DeepInfra's priority tier.** It costs about 50% more than the default tier, but usually keeps
+the voice under a second. On the default tier it sometimes took several seconds.
+
+**Translating with Claude.** Set `TRANSLATION_PROVIDER=claude` and `ANTHROPIC_API_KEY`. Claude translation requests
+use refusal fallbacks: the `server-side-fallback-2026-07-01` beta with `fallbacks: 'default'`. If a safety classifier
+declines a sentence, the API runs the request again on Anthropic's recommended fallback model instead of returning a
+refusal. If that is declined too, the app shows *"The translation service declined to translate this utterance."*
+Refusal fallbacks are a Claude API feature, so they don't apply to translation on DeepInfra. The voices still come from
+DeepInfra if `DEEPINFRA_API_KEY` is set.
 
 ## Languages
 
@@ -163,7 +190,10 @@ The app offers 34 languages, from English, Spanish, Chinese and Arabic to Catala
   phone locks anyway, the browser pauses the page until you come back. The connection then returns on its own. If the
   phone stopped the microphone in the meantime, the app tells you so.
 - **iPhone is untested.** So far the app has been tested only in Chrome. iOS may also play speech through the earpiece
-  instead of the loudspeaker while the microphone is on.
+  instead of the loudspeaker while the microphone is on, or play it more quietly.
+- **Natural voices aren't perfect.** They come from small, fast models. They sometimes mispronounce a word or read a
+  time such as "8:00" oddly. The Chatterbox voices (German, Russian, Korean and the rest of its list) can sound
+  accented, and now and then slur a word.
 - **Phones in the same room hear each other.** When a room's members sit at one table, a phone can pick up a neighbour's
   voice and translate it as its owner's words. Use earphone microphones, or **Hold to talk**.
 - **Translation waits for a pause.** It starts when the speaker stops talking. Until then, you see the live
@@ -173,13 +203,15 @@ The app offers 34 languages, from English, Spanish, Chinese and Arabic to Catala
 ## Privacy
 
 - **Where audio goes:** from the phone to your relay server, then to Deepgram for speech recognition.
-- **Where text goes:** the recognized text goes to Anthropic for translation, along with the last ten lines of the
-  conversation as context.
-- **Provider policies:** Deepgram's and Anthropic's data policies apply to what they receive.
+- **Where text goes:** the recognized text goes to DeepInfra for translation, along with the last ten lines of the
+  conversation as context. Translations then go to DeepInfra again to be read aloud, unless you choose the phone's
+  own voice. With `TRANSLATION_PROVIDER=claude`, translation goes to Anthropic instead.
+- **Provider policies:** Deepgram's and DeepInfra's data policies (and Anthropic's, with Claude) apply to what they
+  receive.
 - **What the server keeps:** nothing is stored. There are no recordings, transcripts or accounts. Conversations and
   rooms exist in memory only while they are active, and the logs never contain what people say.
 - **What the phone keeps:** your settings, in the browser's local storage. These are your languages, mode, name,
-  microphone and access code.
+  microphone, voice and access code.
 
 ## Security
 
@@ -200,13 +232,17 @@ server/src/
   solo.ts           one-phone conversations: who is speaking, Me / Them
   rooms.ts          rooms: codes, participants, one translation per language
   stt/              speech-to-text: the SttProvider interface, Deepgram, sentence segmentation
-  translate/        the Translator interface, the Claude translator and its prompt
+  translate/        the Translator interface, the DeepInfra and Claude translators, and the prompt
+  voice/            the SpeechSynthesizer interface and DeepInfra's natural voices
+  deepinfra.ts      what the DeepInfra translator and voices share
 client/src/
   setup-view.ts     start screen
   live-view.ts      conversation screen
   live-session.ts   connects the microphone, the server and the spoken translations
   connection.ts     WebSocket that reconnects on its own
   audio/            microphone capture, resampling to 16 kHz
+  voice-player.ts   plays the natural voices
+  speech-queue.ts   reads translations one at a time, in the order they were said
   tts.ts            text-to-speech with the phone's voices
 client/public/      audio worklet, web app manifest, icon
 shared/             protocol, languages, room codes (used by both sides)
@@ -218,7 +254,7 @@ server/test/, client/test/
 | Command             | What it does |
 |---------------------|--------------|
 | `npm run dev`       | Starts the relay server, which restarts when files change, and the app's HTTPS development server. |
-| `npm test`          | Runs the unit and integration tests. Speech recognition and translation are faked, so no keys are needed. |
+| `npm test`          | Runs the unit and integration tests. Speech recognition, translation and voices are faked, so no keys are needed. |
 | `npm run typecheck` | Type-checks the server and the app. |
 | `npm run build`     | Builds the app for production. |
 | `npm start`         | Runs the production server. |
@@ -226,14 +262,15 @@ server/test/, client/test/
 The server runs TypeScript directly with Node's type stripping, so it has no build step. Only erasable TypeScript
 syntax is allowed: for example, no `enum` and no constructor parameter properties.
 
-### Another speech recognizer or translator
+### Another speech recognizer, translator or voice
 
 To use another service, implement one of these interfaces and pass it to `createApp` in `server/src/index.ts`:
 
 - `SttProvider` in [`server/src/stt/types.ts`](server/src/stt/types.ts), for speech recognition;
-- `Translator` in [`server/src/translate/types.ts`](server/src/translate/types.ts), for translation.
+- `Translator` in [`server/src/translate/types.ts`](server/src/translate/types.ts), for translation;
+- `SpeechSynthesizer` in [`server/src/voice/types.ts`](server/src/voice/types.ts), for the voices.
 
-The tests use fake versions of both, in `server/test/fakes.ts`.
+The tests use fake versions of all three, in `server/test/fakes.ts`.
 
 Automatic speaker detection in One phone mode relies on Deepgram's multilingual mode, which tags the language of each
 word. See `AUTO_DETECT_BASES` in `shared/languages.ts`.
@@ -242,7 +279,7 @@ word. See `AUTO_DETECT_BASES` in `shared/languages.ts`.
 
 - A native app wrapper, for example with Capacitor, to keep listening while the screen is locked and to choose the
   audio output.
-- More natural cloud voices, in place of the phone's built-in ones.
+- Natural voices for the ten languages that don't have one yet.
 - More speech recognizers, through `SttProvider`.
 - PNG icons for the iOS home screen.
 
