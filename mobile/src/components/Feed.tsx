@@ -1,28 +1,67 @@
 // The running conversation: what each person said, in their language and translated.
 // It follows new lines unless the user has scrolled up to read.
 
-import { memo, useCallback, useRef } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { FlatList, Text, View } from 'react-native';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 
+import type { SkipReason } from '../../../shared/protocol.ts';
 import { plainLanguageName } from '../language-names.ts';
 import type { FeedEntry, Interim } from '../live-session.ts';
-import { RADIUS, themedStyles } from '../theme.ts';
+import { themedStyles, type } from '../theme.ts';
+import { CompactButton } from './Button.tsx';
+import { Icon } from './Icon.tsx';
 
 /** Keep following new lines only when the user has not scrolled up to read. */
 const FOLLOW_WITHIN = 80;
+
+type Row =
+  | { kind: 'entry'; key: string; entry: FeedEntry }
+  | { kind: 'more'; key: string; run: string; hidden: number; open: boolean };
+
+/**
+ * Of several skipped lines in a row only the latest shows, after a button that shows the
+ * others, so that noise does not push the conversation off the screen. Runs are known by
+ * the id of their first line.
+ */
+function feedRows(entries: readonly FeedEntry[], openRuns: ReadonlySet<string>): Row[] {
+  const rows: Row[] = [];
+  let run: FeedEntry[] = [];
+  const endRun = () => {
+    const first = run[0];
+    if (first === undefined) return;
+    const open = openRuns.has(first.id);
+    if (run.length > 1) rows.push({ kind: 'more', key: `more:${first.id}`, run: first.id, hidden: run.length - 1, open });
+    for (const entry of open ? run : run.slice(-1)) rows.push({ kind: 'entry', key: entry.id, entry });
+    run = [];
+  };
+  for (const entry of entries) {
+    if (entry.skipped) {
+      run.push(entry);
+      continue;
+    }
+    endRun();
+    rows.push({ kind: 'entry', key: entry.id, entry });
+  }
+  endRun();
+  return rows;
+}
 
 interface FeedProps {
   entries: readonly FeedEntry[];
   interims: readonly Interim[];
   /** Shown until someone speaks. */
   placeholder: string;
+  /** Translate something that was skipped. */
+  onTranslate(id: string): void;
 }
 
-export function Feed({ entries, interims, placeholder }: FeedProps) {
-  const { styles } = useStyles();
-  const list = useRef<FlatList<FeedEntry>>(null);
+export function Feed({ entries, interims, placeholder, onTranslate }: FeedProps) {
+  const { styles, palette } = useStyles();
+  const list = useRef<FlatList<Row>>(null);
   const following = useRef(true);
+  const [openRuns, setOpenRuns] = useState<ReadonlySet<string>>(() => new Set());
+  const rows = useMemo(() => feedRows(entries, openRuns), [entries, openRuns]);
 
   const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -31,18 +70,49 @@ export function Feed({ entries, interims, placeholder }: FeedProps) {
   const onContentSizeChange = useCallback(() => {
     if (following.current) list.current?.scrollToEnd({ animated: true });
   }, []);
+  const toggleRun = useCallback((run: string) => {
+    setOpenRuns((current) => {
+      const next = new Set(current);
+      if (!next.delete(run)) next.add(run);
+      return next;
+    });
+  }, []);
+  const renderRow = useCallback(
+    ({ item }: { item: Row }) => {
+      if (item.kind === 'more') {
+        return (
+          <CompactButton
+            label={item.open ? 'Show fewer' : `${item.hidden} more not translated`}
+            icon={item.open ? 'chevron-up' : 'chevron-down'}
+            accessibilityState={{ expanded: item.open }}
+            onPress={() => toggleRun(item.run)}
+            style={styles.more}
+          />
+        );
+      }
+      return item.entry.skipped ? <Skipped entry={item.entry} onTranslate={onTranslate} /> : <Bubble entry={item.entry} />;
+    },
+    [onTranslate, toggleRun, styles.more],
+  );
 
-  const empty = entries.length === 0 && interims.length === 0;
+  if (rows.length === 0 && interims.length === 0) {
+    return (
+      <View style={styles.empty}>
+        <Icon name="messages-square" size={36} color={palette.muted} />
+        <Text style={styles.emptyText}>{placeholder}</Text>
+      </View>
+    );
+  }
   return (
     <FlatList
       ref={list}
       style={styles.feed}
       contentContainerStyle={styles.content}
-      data={entries}
+      data={rows}
       keyExtractor={keyOf}
-      renderItem={renderEntry}
-      ListHeaderComponent={empty ? <Text style={styles.empty}>{placeholder}</Text> : null}
-      ListFooterComponent={interims.length > 0 ? <Interims interims={interims} /> : null}
+      renderItem={renderRow}
+      ItemSeparatorComponent={Gap}
+      ListFooterComponent={interims.length > 0 ? <Captions interims={interims} spaced={rows.length > 0} /> : null}
       onScroll={onScroll}
       scrollEventThrottle={100}
       onContentSizeChange={onContentSizeChange}
@@ -51,64 +121,104 @@ export function Feed({ entries, interims, placeholder }: FeedProps) {
   );
 }
 
-function keyOf(entry: FeedEntry): string {
-  return entry.id;
+function keyOf(row: Row): string {
+  return row.key;
 }
 
-function renderEntry({ item }: { item: FeedEntry }) {
-  return <Entry entry={item} />;
+function Gap() {
+  const { styles } = useStyles();
+  return <View style={styles.gap} />;
 }
 
 /** Entries are replaced, never changed, so a new object means a change. */
-const Entry = memo(function Entry({ entry }: { entry: FeedEntry }) {
+const Bubble = memo(function Bubble({ entry }: { entry: FeedEntry }) {
   const { styles } = useStyles();
-  const translation = entry.translation;
+  const { translation, mine } = entry;
   // For what others said, their words in my language matter most.
-  const translationFirst = !entry.mine && translation !== undefined;
+  const translationFirst = !mine && translation !== undefined;
   const original = (
-    <Text style={[styles.original, translationFirst && styles.originalSecondary]} selectable>
+    <Text style={translationFirst ? styles.second : styles.first} selectable>
       {entry.text}
     </Text>
   );
   let translated = null;
   if (translation) {
     const { state, text } = translation;
-    const shown =
-      state === 'pending' ? 'Translating…' : state === 'empty' ? '(nothing to translate)' : text;
+    const shown = state === 'pending' ? 'Translating…' : state === 'empty' ? '(nothing to translate)' : text;
     translated = (
       <Text
         selectable
         style={[
-          styles.translation,
-          translationFirst && styles.translationMain,
-          (state === 'pending' || state === 'empty') && styles.translationQuiet,
-          state === 'streaming' && styles.translationStreaming,
-          state === 'failed' && styles.translationFailed,
+          translationFirst ? styles.first : styles.second,
+          (state === 'pending' || state === 'empty') && styles.quiet,
+          state === 'pending' && styles.italic,
+          state === 'failed' && styles.failed,
         ]}
       >
         {shown}
-        {state === 'interrupted' && <Text style={styles.cutOff}> (cut off)</Text>}
+        {state === 'interrupted' && ' (cut off)'}
       </Text>
     );
   }
   return (
-    <View style={[styles.entry, entry.mine ? styles.mine : styles.theirs]}>
-      <Text style={styles.meta}>{`${entry.speaker} · ${plainLanguageName(entry.lang)}`}</Text>
-      {translationFirst ? translated : original}
-      {translationFirst ? original : translated}
+    <View style={[styles.row, mine && styles.rowMine]}>
+      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
+        <Text style={styles.who}>{`${entry.speaker} · ${plainLanguageName(entry.lang)}`}</Text>
+        {translationFirst ? translated : original}
+        {translationFirst ? original : translated}
+      </View>
     </View>
   );
 });
 
-function Interims({ interims }: { interims: readonly Interim[] }) {
+const SKIP_REASONS: Readonly<Record<Exclude<SkipReason, 'language'>, string>> = {
+  distant: 'far away',
+  voice: 'another voice',
+};
+
+/** Something heard but not translated: too far away, another voice or another language. */
+const Skipped = memo(function Skipped({ entry, onTranslate }: { entry: FeedEntry; onTranslate(id: string): void }) {
+  const { styles, palette } = useStyles();
+  const skipped = entry.skipped;
+  if (!skipped) return null;
+  const accepting = skipped.state === 'accepting';
+  const why = skipped.reason === 'language' ? plainLanguageName(entry.lang) : SKIP_REASONS[skipped.reason];
+  return (
+    <View style={styles.skipped}>
+      <Icon name={accepting ? 'languages' : 'ear-off'} size={22} color={palette.idle} />
+      <View style={styles.skippedTexts}>
+        <Text style={styles.skippedWhy}>{accepting ? 'Translating…' : `Not translated · ${why}`}</Text>
+        <Text style={styles.skippedWords}>{entry.text}</Text>
+      </View>
+      {skipped.state === 'skipped' && (
+        <CompactButton
+          label="Translate"
+          icon="languages"
+          accessibilityLabel={`Translate “${entry.text}”`}
+          onPress={() => onTranslate(entry.id)}
+        />
+      )}
+    </View>
+  );
+});
+
+/** What someone is saying right now, before it is finished. */
+function Captions({ interims, spaced }: { interims: readonly Interim[]; spaced: boolean }) {
   const { styles } = useStyles();
   return (
-    // Live, unfinished transcripts: too jumpy for screen readers.
-    <View style={styles.interims} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+    // Live, unfinished words: too jumpy for screen readers.
+    <View
+      style={[styles.captions, spaced && styles.captionsSpaced]}
+      importantForAccessibility="no-hide-descendants"
+      accessibilityElementsHidden
+    >
       {interims.map((interim) => (
-        <Text key={interim.key} style={[styles.interim, interim.mine && styles.interimMine]}>
-          {`${interim.speaker}: ${interim.text}`}
-        </Text>
+        <View key={interim.key} style={[styles.row, interim.mine && styles.rowMine]}>
+          <View style={[styles.caption, interim.mine && styles.captionMine]}>
+            <Text style={styles.who}>{`${interim.speaker} · still talking…`}</Text>
+            <Text style={styles.captionWords}>{interim.text}</Text>
+          </View>
+        </View>
       ))}
     </View>
   );
@@ -119,94 +229,126 @@ const useStyles = themedStyles((palette) => ({
     flex: 1,
   },
   content: {
-    paddingTop: 12,
-    paddingBottom: 16,
-    paddingHorizontal: 16,
+    paddingVertical: 4,
+  },
+  gap: {
+    height: 12,
   },
   empty: {
-    maxWidth: 352,
-    marginVertical: 32,
-    alignSelf: 'center',
+    flex: 1,
+    alignItems: 'center',
+    gap: 12,
+    padding: 24,
+  },
+  emptyText: {
+    ...type.body,
+    maxWidth: 360,
     color: palette.muted,
-    fontSize: 16,
-    lineHeight: 23,
     textAlign: 'center',
   },
-  entry: {
-    maxWidth: '88%',
-    marginBottom: 10,
-    paddingVertical: 9,
-    paddingHorizontal: 13,
-    gap: 2,
-    borderWidth: 1,
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+  },
+  rowMine: {
+    justifyContent: 'flex-end',
+  },
+  bubble: {
+    maxWidth: '86%',
+    gap: 6,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderWidth: 2,
+  },
+  bubbleTheirs: {
     borderColor: palette.border,
-    borderRadius: RADIUS,
-  },
-  mine: {
-    alignSelf: 'flex-end',
-    borderBottomRightRadius: 6,
-    backgroundColor: palette.mineBg,
-  },
-  theirs: {
-    alignSelf: 'flex-start',
-    borderBottomLeftRadius: 6,
+    borderTopLeftRadius: 6,
+    borderTopRightRadius: 20,
+    borderBottomRightRadius: 20,
+    borderBottomLeftRadius: 20,
     backgroundColor: palette.surface,
   },
-  meta: {
-    color: palette.muted,
-    fontSize: 12,
-    fontWeight: '600',
+  bubbleMine: {
+    borderColor: palette.accentSoft,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 6,
+    borderBottomRightRadius: 20,
+    borderBottomLeftRadius: 20,
+    backgroundColor: palette.mine,
   },
-  original: {
+  who: {
+    ...type.smallBold,
+    color: palette.muted,
+  },
+  first: {
+    ...type.large,
     color: palette.text,
-    fontSize: 16,
-    lineHeight: 22,
   },
-  originalSecondary: {
+  second: {
+    ...type.secondary,
     color: palette.muted,
-    fontSize: 14,
-    lineHeight: 20,
   },
-  translation: {
+  quiet: {
     color: palette.muted,
-    fontSize: 15,
-    lineHeight: 21,
   },
-  translationMain: {
-    color: palette.text,
-    fontSize: 18,
-    lineHeight: 25,
-    fontWeight: '600',
-  },
-  translationQuiet: {
-    color: palette.muted,
+  italic: {
     fontStyle: 'italic',
-    fontWeight: '400',
   },
-  translationStreaming: {
-    opacity: 0.85,
-  },
-  translationFailed: {
+  failed: {
+    fontWeight: '700',
     color: palette.danger,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
   },
-  cutOff: {
-    color: palette.muted,
-    fontSize: 13,
-    fontWeight: '400',
+  more: {
+    alignSelf: 'flex-start',
   },
-  interims: {
-    gap: 6,
-    marginTop: 4,
+  skipped: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingTop: 12,
+    paddingRight: 12,
+    paddingBottom: 12,
+    paddingLeft: 16,
+    borderRadius: 14,
+    backgroundColor: palette.idleSoft,
   },
-  interim: {
-    color: palette.muted,
-    fontSize: 15,
+  skippedTexts: {
+    flex: 1,
+    gap: 2,
+  },
+  skippedWhy: {
+    ...type.smallBold,
+    color: palette.idle,
+  },
+  skippedWords: {
+    ...type.secondary,
     fontStyle: 'italic',
+    color: palette.idle,
   },
-  interimMine: {
-    textAlign: 'right',
+  captions: {
+    gap: 12,
+  },
+  captionsSpaced: {
+    marginTop: 12,
+  },
+  caption: {
+    maxWidth: '86%',
+    gap: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderTopLeftRadius: 6,
+    borderTopRightRadius: 20,
+    borderBottomRightRadius: 20,
+    borderBottomLeftRadius: 20,
+    backgroundColor: palette.surface2,
+  },
+  captionMine: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 6,
+  },
+  captionWords: {
+    ...type.body,
+    fontStyle: 'italic',
+    color: palette.muted,
   },
 }));

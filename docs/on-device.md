@@ -1,10 +1,11 @@
 # Running EarBridge fully on the phone
 
-Today the EarBridge app sends audio to the relay server, which uses Deepgram and DeepInfra. This page answers one
-question: could the phone do all three steps itself, with no server, no internet and no API keys? The three steps are
-speech to text, translation, and reading the translation aloud.
+The EarBridge app can send audio to a relay server, which uses Deepgram and DeepInfra, or call those services itself
+with your own API keys. This page answers one question: could the phone do all three steps itself, with no server, no
+internet and no API keys? The three steps are speech to text, translation, and reading the translation aloud.
 
-Nothing on this page is built into the app yet. It is research, done on 1 October 2026.
+This is research, done on 1 October 2026. Its Android setup is now in the app: choose **On this phone** under
+**Translation**. See [How the app does it](#how-the-app-does-it). iPhone and the open models are still to do.
 
 ## Short answer
 
@@ -28,7 +29,7 @@ Nothing on this page is built into the app yet. It is research, done on 1 Octobe
 | Speech to text | Apple SpeechAnalyzer | Android's on-device SpeechRecognizer | Whisper base or small (whisper.rn) |
 | Translation | Apple's Translation framework | Google ML Kit Translation | Gemma 4 E2B (llama.rn) |
 | Voice | The phone's voice (AVSpeechSynthesizer) | The phone's voice | The phone's voice (expo-speech) |
-| Download | About 340 MB per language for speech, plus translation packs | About 30 MB per language for translation, plus speech packs | 2.6 GB for translation, plus 60–190 MB for speech |
+| Download | About 340 MB per language for speech, plus translation packs | About 30 MB per language for translation, plus speech packs (49–57 MB in our tests) | 2.6 GB for translation, plus 60–190 MB for speech |
 
 Use the phone's own engines first: they are smaller and tuned for the hardware. Keep the open models for languages or
 phones that the built-in engines don't cover.
@@ -118,19 +119,31 @@ These ran on the Mac. macOS 26 has the same frameworks as iOS 26.
 
 ### Android's built-in engines
 
-Not tested on a phone yet. From Google's documentation:
+These ran in the app, in the Android emulator (Android 16), with test clips made by the Mac's voices. They have not
+been tried on a real phone yet.
 
-- **Speech to text:** the on-device SpeechRecognizer, with language packs that download on demand, needs Android 13.
-  Detecting the spoken language needs Android 14. Quality varies between phone makers.
-- **Translation:** ML Kit translates between 59 languages, about 30 MB each. Pairs without English go through English.
-  Google describes it as "intended for casual and simple translations".
+- **Speech to text:** the on-device SpeechRecognizer needs Android 13. Detecting the spoken language needs Android 14,
+  so the app asks who is speaking instead, with **Me** and **Them**. Google says quality varies between phone makers.
+- **Speech packs download on demand, after a prompt.** English was already installed. For Spanish and French, Android
+  showed its own download dialog: 49 MB for Spanish and 57 MB for French, which then took 37 MB of storage. Android
+  can also take a download over and finish it in its own time: French stopped reporting progress at 34%, and was ready
+  about 3.5 minutes later.
+- **Recognition is less accurate than Deepgram.** A Spanish test sentence came out right. In French, "près d'ici"
+  ("near here") came out as "préjudice" in both runs, so the translation asked "Is there any damage?".
+- **Translation:** ML Kit translates between 59 languages, about 30 MB each, and worked offline. Pairs without English
+  go through English. Google describes it as "intended for casual and simple translations". It translates each
+  sentence on its own, without the conversation around it.
 - **Gemini Nano**, Google's on-device language model, refuses to run while the app is off screen, even with a
   foreground service. It can't power a locked-screen mode.
 
 ## Running with the screen off
 
-- **Android:** this works, through a microphone foreground service like the one the app already uses. Since Android
-  14, the service must start while the app is on screen. It then keeps running.
+- **Android:** this works, through the app's microphone foreground service. Since Android 14, the service must start
+  while the app is on screen. It then keeps running. In the emulator, with the screen locked, **On this phone** kept
+  recognizing, translating and speaking. One caveat: the phone's voice plays from the phone's text-to-speech app
+  (Google's, in the emulator), not from EarBridge, and Android 16 logs that its playback "would be muted" in the
+  background. It wasn't muted, but a later Android version might mute it. Having the voice write its audio to a file,
+  for EarBridge to play, would avoid that.
 - **iPhone:** recording must start while the app is on screen. The `audio` background mode then lets it continue.
   Whether SpeechAnalyzer and the Translation framework keep working while the phone is locked needs testing on a
   device. App Review also checks that background audio is used for its intended purpose.
@@ -143,24 +156,30 @@ Not tested on a phone yet. From Google's documentation:
 - **Android:** there is no fixed limit for model memory, but the system closes apps that use too much. We estimate
   about 2 GB is safe on mid-range phones.
 
-## Adding it to the app
+## How the app does it
 
-The app's screens, settings and audio code would stay. An on-device mode would replace the connection to the relay
-with three local steps:
+On Android, **On this phone** uses the recommended setup above. The conversation runs in the app instead of on a
+server, with the same code the server uses for one-phone conversations, in `shared/pipeline/`. The screens work the
+same way.
 
-1. **Speech to text**
-   - iPhone: react-native-nitro-speech, the only React Native library for SpeechAnalyzer. It stops listening when the
-     app goes to the background, so screen-off use needs a modified copy.
-   - Android: expo-speech-recognition, which uses the on-device recognizer.
-   - Open models: whisper.rn.
-2. **Translation**
-   - expo-translate-text uses Apple's Translation framework on iPhone and ML Kit on Android. It translates one sentence
-     at a time.
-   - Open models: llama.rn with Gemma 4 E2B.
-3. **Voice:** expo-speech, which the app already uses for the phone's own voice.
+1. **Speech to text:** the app's own native module, `EarbridgeOnDeviceModule.kt`, gives the on-device
+   SpeechRecognizer the audio that the app already records, through a pipe. The recognizer doesn't open a microphone
+   itself, so it hears the one chosen under **Advanced → Microphone**, and it keeps working inside the app's
+   foreground service while the screen is off. It listens for one language at a time, so the app asks who is
+   speaking, with **Me** and **Them**.
+2. **Translation:** ML Kit, through the same module. A missing language downloads the first time it is used.
+3. **Voice:** the phone's own voice, through expo-speech, as in the other modes.
 
-Room mode would still need a network to connect the phones. But each phone could recognize and translate on its own,
-and send only text.
+Still to do:
+
+- **iPhone:** react-native-nitro-speech is the only React Native library for SpeechAnalyzer. It stops listening when
+  the app goes to the background, so screen-off use needs a modified copy, or a native module like Android's.
+  expo-translate-text uses Apple's Translation framework. It translates one sentence at a time.
+- **Open models,** for the languages and phones that the built-in engines don't cover: whisper.rn for speech, and
+  llama.rn with Gemma 4 E2B for translation.
+
+Room mode still needs a server to connect the phones. But each phone could recognize and translate on its own, and
+send only text.
 
 Versions checked: expo-speech-recognition 57.1.0, react-native-nitro-speech 0.4.9, expo-translate-text 0.3.0,
 whisper.rn 0.7.4 and llama.rn 0.12.9.

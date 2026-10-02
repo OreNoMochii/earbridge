@@ -1,18 +1,34 @@
+// Short messages near the top of a conversation; they go away by themselves.
+
 import { Text, View } from 'react-native';
 
 import type { Toast } from '../live-session.ts';
-import { themedStyles } from '../theme.ts';
+import { themedStyles, type } from '../theme.ts';
+import { Icon } from './Icon.tsx';
+import type { IconName } from './Icon.tsx';
 
-/** Short messages over the conversation; they go away by themselves. */
+/** An icon that hints at what the message is about; the order matters. */
+function toastIcon(message: string): IconName {
+  if (/^Earphones connected/.test(message)) return 'headphones';
+  if (/disconnected|No earphones/.test(message)) return 'speaker';
+  if (/microphone/i.test(message)) return 'mic';
+  if (/voice/i.test(message)) return 'volume-2';
+  if (/copied/.test(message)) return 'check';
+  if (/joined\.$/.test(message)) return 'user-plus';
+  if (/left\.$/.test(message)) return 'log-out';
+  return 'info';
+}
+
 export function Toasts({ toasts, top }: { toasts: readonly Toast[]; top: number }) {
-  const { styles } = useStyles();
+  const { styles, palette } = useStyles();
   if (toasts.length === 0) return null;
   return (
-    <View style={[styles.toasts, { top }]} pointerEvents="none">
-      {toasts.map((toast) => (
-        <Text key={toast.id} style={styles.toast} accessibilityLiveRegion="polite" accessibilityRole="alert">
-          {toast.message}
-        </Text>
+    <View style={[styles.toasts, { top }]}>
+      {toasts.slice(-3).map((toast) => (
+        <View key={toast.id} style={styles.toast} accessible accessibilityRole="alert" accessibilityLiveRegion="polite">
+          <Icon name={toastIcon(toast.message)} size={24} color={palette.toastText} />
+          <Text style={styles.text}>{toast.message}</Text>
+        </View>
       ))}
     </View>
   );
@@ -24,21 +40,26 @@ const useStyles = themedStyles((palette) => ({
     left: 16,
     right: 16,
     zIndex: 10,
-    gap: 6,
+    gap: 8,
+    pointerEvents: 'none',
   },
   toast: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    overflow: 'hidden',
-    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderRadius: 16,
     backgroundColor: palette.toastBg,
-    color: palette.toastText,
-    fontSize: 15,
-    lineHeight: 20,
     elevation: 6,
     shadowColor: '#000000',
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
     shadowOffset: { width: 0, height: 6 },
+  },
+  text: {
+    ...type.secondary,
+    flex: 1,
+    color: palette.toastText,
   },
 }));

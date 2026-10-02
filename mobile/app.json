@@ -1,8 +1,11 @@
 {
   "expo": {
-    "name": "EarBridge",
+    "name": "Alo",
     "slug": "earbridge",
-    "scheme": "earbridge",
+    "scheme": [
+      "alo",
+      "earbridge"
+    ],
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -11,7 +14,7 @@
       "bundleIdentifier": "app.earbridge.mobile",
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocalNetworkUsageDescription": "EarBridge connects to the translation server on your network.",
+        "NSLocalNetworkUsageDescription": "Alo connects to the computer that translates for it on your network.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         }
@@ -20,7 +23,7 @@
     "android": {
       "package": "app.earbridge.mobile",
       "adaptiveIcon": {
-        "backgroundColor": "#0f766e",
+        "backgroundColor": "#0B5F58",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -36,7 +39,7 @@
       [
         "react-native-audio-api",
         {
-          "iosMicrophonePermission": "EarBridge listens to the conversation to translate it.",
+          "iosMicrophonePermission": "Alo listens to the conversation to translate it.",
           "iosBackgroundMode": true,
           "androidPermissions": [],
           "androidForegroundService": false,
@@ -47,11 +50,58 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "packagingOptions": {
+              "exclude": [
+                "**/libsherpa-onnx-c-api.so",
+                "**/libsherpa-onnx-cxx-api.so"
+              ]
+            }
           }
         }
       ],
-      "expo-localization"
+      "expo-localization",
+      "expo-secure-store",
+      [
+        "expo-font",
+        {
+          "android": {
+            "fonts": [
+              {
+                "fontFamily": "Atkinson Hyperlegible",
+                "fontDefinitions": [
+                  {
+                    "path": "./node_modules/@expo-google-fonts/atkinson-hyperlegible/400Regular/AtkinsonHyperlegible_400Regular.ttf",
+                    "weight": 400
+                  },
+                  {
+                    "path": "./node_modules/@expo-google-fonts/atkinson-hyperlegible/400Regular_Italic/AtkinsonHyperlegible_400Regular_Italic.ttf",
+                    "weight": 400,
+                    "style": "italic"
+                  },
+                  {
+                    "path": "./node_modules/@expo-google-fonts/atkinson-hyperlegible/700Bold/AtkinsonHyperlegible_700Bold.ttf",
+                    "weight": 700
+                  },
+                  {
+                    "path": "./node_modules/@expo-google-fonts/atkinson-hyperlegible/700Bold_Italic/AtkinsonHyperlegible_700Bold_Italic.ttf",
+                    "weight": 700,
+                    "style": "italic"
+                  }
+                ]
+              }
+            ]
+          },
+          "ios": {
+            "fonts": [
+              "./node_modules/@expo-google-fonts/atkinson-hyperlegible/400Regular/AtkinsonHyperlegible_400Regular.ttf",
+              "./node_modules/@expo-google-fonts/atkinson-hyperlegible/400Regular_Italic/AtkinsonHyperlegible_400Regular_Italic.ttf",
+              "./node_modules/@expo-google-fonts/atkinson-hyperlegible/700Bold/AtkinsonHyperlegible_700Bold.ttf",
+              "./node_modules/@expo-google-fonts/atkinson-hyperlegible/700Bold_Italic/AtkinsonHyperlegible_700Bold_Italic.ttf"
+            ]
+          }
+        }
+      ]
     ]
   }
 }

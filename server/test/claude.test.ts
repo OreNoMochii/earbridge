@@ -5,10 +5,10 @@ import type { IncomingHttpHeaders, Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 import Anthropic, { APIUserAbortError } from '@anthropic-ai/sdk';
+import { SYSTEM_PROMPT, buildUserPrompt } from '../../shared/pipeline/translate/prompt.ts';
+import { TranslationError, TranslationRefusedError } from '../../shared/pipeline/translate/types.ts';
+import type { TranslationRequest } from '../../shared/pipeline/translate/types.ts';
 import { ClaudeTranslator } from '../src/translate/claude.ts';
-import { SYSTEM_PROMPT, buildUserPrompt } from '../src/translate/prompt.ts';
-import { TranslationError, TranslationRefusedError } from '../src/translate/types.ts';
-import type { TranslationRequest } from '../src/translate/types.ts';
 
 type Reply =
   | { kind: 'stream'; chunks: string[]; stopReason: string }

@@ -11,8 +11,18 @@ android {
   defaultConfig {
     versionCode 1
     versionName "0.1.0"
+    consumerProguardFiles 'proguard-rules.pro'
   }
   lint {
     abortOnError false
   }
+}
+
+dependencies {
+  // On-phone translation: downloadable models, about 30 MB per language.
+  implementation 'com.google.mlkit:translate:17.0.3'
+  // Voice prints for "Only our voices" (from JitPack): ONNX Runtime and a speaker model's
+  // front end, about 27 MB on arm64. The model downloads at first use. Only the Android
+  // library: `com.github.k2-fsa:sherpa-onnx` would bring the desktop ones too.
+  implementation 'com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.8'
 }

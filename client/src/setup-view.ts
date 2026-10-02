@@ -165,6 +165,29 @@ export function renderSetup(options: SetupOptions): SetupView {
     ),
     talkHint,
   );
+  // One phone in noisy places
+  const nearbyInput = h('input', {
+    type: 'checkbox',
+    checked: settings.nearbyOnly,
+    onchange: () => update({ nearbyOnly: nearbyInput.checked }),
+  });
+  const noisyCard = h(
+    'fieldset',
+    { class: 'card choices' },
+    h('legend', {}, 'Noisy places'),
+    h(
+      'label',
+      { class: 'choice' },
+      nearbyInput,
+      h('span', { class: 'choice-text' }, h('span', { class: 'choice-label' }, 'Ignore distant voices')),
+    ),
+    h(
+      'p',
+      { class: 'hint' },
+      'Skips speech much quieter than you two, like people at other tables or a radio. When who is speaking is detected automatically, speech in other languages is skipped too. Tap Translate on anything skipped by mistake.',
+    ),
+  );
+
   const outputHint = h('p', { class: 'hint' });
   const outputChoices = h(
     'fieldset',
@@ -270,6 +293,7 @@ export function renderSetup(options: SetupOptions): SetupView {
       soloCard,
       roomCard,
       talkChoices,
+      noisyCard,
       outputChoices,
       advanced,
       startButton,
@@ -285,6 +309,7 @@ export function renderSetup(options: SetupOptions): SetupView {
     const solo = settings.mode === 'solo';
     soloCard.hidden = !solo;
     roomCard.hidden = solo;
+    noisyCard.hidden = !solo;
     myLangSolo.value = settings.myLang;
     myLangRoom.value = settings.myLang;
     theirLangSelect.value = settings.theirLang;

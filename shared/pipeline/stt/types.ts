@@ -12,6 +12,12 @@ export interface SttResult {
   fromFinalize: boolean;
   /** Per-word language tags (base codes like "en"), when the recognizer provides them. */
   wordLanguages: string[];
+  /**
+   * When the first word starts and the last one ends, in seconds of audio since the
+   * stream's first `sendAudio`, when the recognizer reports word timings.
+   */
+  start?: number;
+  end?: number;
 }
 
 export type SttStatus = 'connecting' | 'live' | 'reconnecting';
@@ -33,7 +39,7 @@ export interface SttStreamOptions {
 
 export interface SttStream {
   /** 16 kHz mono PCM16LE audio. */
-  sendAudio(chunk: Buffer): void;
+  sendAudio(chunk: Uint8Array): void;
   /** Force the recognizer to finalize everything heard so far. */
   finalize(): void;
   /** Finish gracefully: pending results are still delivered, then the stream ends. */

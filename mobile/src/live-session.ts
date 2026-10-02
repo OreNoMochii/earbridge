@@ -1,6 +1,7 @@
-// One conversation, from the Start tap until it ends: wires the microphone, the server
-// connection, the transcript and the spoken translations together, and holds what the
-// conversation screen shows. A port of the web app's client/src/live-session.ts.
+// One conversation, from the Start tap until it ends: wires the microphone, the engine
+// (a computer running the server, or the phone itself), the transcript and the spoken translations
+// together, and holds what the conversation screen shows. A port of the web app's
+// client/src/live-session.ts.
 
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
@@ -10,8 +11,8 @@ import { voiceLanguages } from '../../client/src/settings.ts';
 import { OrderedSpeechQueue } from '../../client/src/speech-queue.ts';
 import type { SpeechItem } from '../../client/src/speech-queue.ts';
 import { canAutoDetect, sameLanguage } from '../../shared/languages.ts';
-import { SOLO_ME } from '../../shared/protocol.ts';
-import type { ClientMessage, Participant, ServerMessage, SpeakerSelection } from '../../shared/protocol.ts';
+import { SKIPPED_KEPT, SOLO_ME } from '../../shared/protocol.ts';
+import type { ClientMessage, Participant, ServerMessage, SkipReason, SpeakerSelection } from '../../shared/protocol.ts';
 import { formatRoomCode } from '../../shared/room-code.ts';
 import EarbridgeAudio from '../modules/earbridge-audio/src/EarbridgeAudioModule.ts';
 import type { CaptureInput } from '../modules/earbridge-audio/src/EarbridgeAudioModule.ts';
@@ -24,8 +25,13 @@ import { PhoneVoice } from './audio/phone-voice.ts';
 import { VoicePlayer } from './audio/voice-player.ts';
 import { Connection } from './connection.ts';
 import type { ConnectionState, EndReason } from './connection.ts';
+import type { Backend, BackendEvents } from './engines/backend.ts';
+import { InAppBackend } from './engines/in-app-backend.ts';
+import type { InAppOptions } from './engines/in-app-backend.ts';
+import { prepareKeys } from './engines/keys.ts';
+import { prepareLocal } from './engines/local.ts';
 import { plainLanguageName } from './language-names.ts';
-import { socketUrl } from './server-url.ts';
+import { serverLabel, socketUrl } from './server-url.ts';
 
 /** After the phone speaker stops, its echo in the room takes a moment to die down. */
 const SPEAKER_TAIL_MS = 300;
@@ -37,8 +43,6 @@ const TOAST_MS = 5_000;
 const MAX_TOASTS = 3;
 const MAX_ENTRIES = 200;
 const KEEP_AWAKE_TAG = 'earbridge-conversation';
-/** Test builds play this raw recording (in the app's files folder) instead of using the microphone. */
-const TEST_AUDIO = process.env.EXPO_PUBLIC_TEST_AUDIO || undefined;
 
 export type StatusTone = 'live' | 'busy' | 'idle' | 'speaking';
 /** Which hold-to-talk button: one per person in one-phone mode, a single one in a room. */
@@ -63,7 +67,16 @@ export interface FeedEntry {
   mine: boolean;
   /** The translation this phone receives, if any. */
   translation: { lang: string; text: string; state: TranslationState } | undefined;
+  /** One phone: not translated, as it seemed to come from someone else. */
+  skipped: { reason: SkipReason; state: SkippedState } | undefined;
 }
+
+/**
+ * skipped:   it can still be translated after all.
+ * accepting: asked to be translated after all.
+ * gone:      too old to be translated now.
+ */
+export type SkippedState = 'skipped' | 'accepting' | 'gone';
 
 /** What someone is saying right now, before it is final. */
 export interface Interim {
@@ -113,13 +126,17 @@ export interface LiveState {
 type ReadyMessage = Extract<ServerMessage, { type: 'ready' }>;
 type InterimMessage = Extract<ServerMessage, { type: 'interim' }>;
 type UtteranceMessage = Extract<ServerMessage, { type: 'utterance' }>;
+type SkippedMessage = Extract<ServerMessage, { type: 'skipped' }>;
 type TranslationMessage = Extract<ServerMessage, { type: 'translation' }>;
 type SpeechMessage = Extract<ServerMessage, { type: 'speech' }>;
 
 export interface LiveSessionOptions {
   settings: AppSettings;
-  /** The server, e.g. http://192.168.1.20:8787. */
-  server: string;
+  /**
+   * The server, e.g. http://192.168.1.20:8787, or undefined when the phone does the work
+   * itself (one phone, with the engine in settings).
+   */
+  server: string | undefined;
   /** Room mode: the room to join, or undefined to start a new one. */
   room: string | undefined;
   /**
@@ -141,8 +158,10 @@ export class LiveSession {
   private readonly listeners = new Set<() => void>();
   private readonly levelListeners = new Set<(level: number) => void>();
   private mic: Microphone | undefined;
-  private connection: Connection | undefined;
+  private backend: Backend | undefined;
   private connectionState: ConnectionState = 'connecting';
+  /** What the engine is getting ready, e.g. a language download. */
+  private progress: string | undefined;
   private recognizer: 'starting' | 'live' | 'reconnecting' = 'starting';
   private ended = false;
   private readonly cleanups: (() => void)[] = [];
@@ -165,6 +184,9 @@ export class LiveSession {
   private holdTailTimer: ReturnType<typeof setTimeout> | undefined;
   private speakerTailTimer: ReturnType<typeof setTimeout> | undefined;
 
+  /** One phone: the latest skipped utterances, oldest first, which can still be translated. */
+  private skips: string[] = [];
+
   /** Utterances whose translation will be spoken on this phone. */
   private readonly toSpeak = new Set<string>();
   /** One-phone mode: my utterances, whose translations are shown to the other person. */
@@ -185,7 +207,10 @@ export class LiveSession {
       micLabel: 'Microphone',
       muted: false,
       speaker: undefined,
-      autoDetect: settings.mode === 'solo' && canAutoDetect(settings.myLang, settings.theirLang),
+      autoDetect:
+        settings.mode === 'solo' &&
+        (options.server !== undefined || settings.engine !== 'local') &&
+        canAutoDetect(settings.myLang, settings.theirLang),
       holding: undefined,
       entries: [],
       interims: [],
@@ -236,7 +261,7 @@ export class LiveSession {
     return this.settings.theirLang;
   }
 
-  get server(): string {
+  get server(): string | undefined {
     return this.options.server;
   }
 
@@ -269,17 +294,18 @@ export class LiveSession {
     try {
       mic = await openMicrophone({
         earphoneMic: wantsEarphoneMic(settings),
-        testInputPath: TEST_AUDIO,
-        onAudio: (pcm) => this.connection?.sendAudio(pcm),
+        onAudio: (pcm) => this.backend?.sendAudio(pcm),
         onLevel: (level) => {
           for (const listener of this.levelListeners) listener(level);
         },
         onEnded: (message) => this.end({ message: `${message} Start again to continue.` }),
       });
     } catch (error) {
-      this.end({
-        message: error instanceof MicrophoneError ? error.message : `Could not start the microphone: ${String(error)}`,
-      });
+      this.end(
+        error instanceof MicrophoneError
+          ? { message: error.message, code: error.notAllowed ? 'microphone' : undefined }
+          : { message: `Could not start the microphone: ${String(error)}` },
+      );
       return;
     }
     if (this.ended) {
@@ -298,15 +324,36 @@ export class LiveSession {
     await this.keepRunningInBackground();
     if (this.ended) return;
 
-    this.connection = new Connection({
-      url: socketUrl(this.options.server),
-      serverLabel: this.options.server,
-      hello: () => this.hello(),
+    this.backend = this.createBackend();
+    this.backend.start();
+  }
+
+  private createBackend(): Backend {
+    const { settings } = this;
+    const { server } = this.options;
+    const events: BackendEvents = {
       onMessage: (message) => this.handle(message),
       onStateChange: (state) => this.setConnectionState(state),
-      onEnded: (reason) => this.end(reason),
+      onEnded: (reason) => this.end(withCode(reason)),
+      onProgress: (text) => {
+        this.progress = text;
+        this.updateStatus();
+      },
+    };
+    if (server !== undefined) {
+      return new Connection({ url: socketUrl(server), serverLabel: serverLabel(server), hello: () => this.hello(), ...events });
+    }
+    const prepare: InAppOptions['prepare'] =
+      settings.engine === 'local'
+        ? (signal, progress) => prepareLocal(settings, signal, progress)
+        : (signal, progress) => prepareKeys(settings, signal, progress);
+    return new InAppBackend({
+      myLang: settings.myLang,
+      theirLang: settings.theirLang,
+      nearbyOnly: settings.nearbyOnly,
+      prepare,
+      ...events,
     });
-    this.connection.start();
   }
 
   /** The user ended the conversation. */
@@ -330,7 +377,7 @@ export class LiveSession {
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
     this.mic?.stop();
-    this.connection?.stop();
+    this.backend?.stop();
     this.queue.clear();
     this.awaitingVoice.clear();
     this.voice.close();
@@ -368,8 +415,8 @@ export class LiveSession {
     const text =
       settings.mode === 'solo'
         ? `${myLang} ⇄ ${plainLanguageName(settings.theirLang)}`
-        : `${roomCode ? `Room ${formatRoomCode(roomCode)}` : 'Room'} · ${myLang}`;
-    EarbridgeAudio.showConversation('EarBridge is translating', text, this.state.muted);
+        : `${roomCode ? `Group ${formatRoomCode(roomCode)}` : 'Group'} · ${myLang}`;
+    EarbridgeAudio.showConversation('Alo is translating', text, this.state.muted);
   }
 
   // ---------------------------------------------------------------- the server
@@ -379,7 +426,8 @@ export class LiveSession {
     const token = settings.token.trim() || undefined;
     const voiceLangs = voiceLanguages(settings);
     if (settings.mode === 'solo') {
-      return { type: 'hello', mode: 'solo', myLang: settings.myLang, theirLang: settings.theirLang, voiceLangs, token };
+      const { myLang, theirLang, nearbyOnly } = settings;
+      return { type: 'hello', mode: 'solo', myLang, theirLang, voiceLangs, nearbyOnly, token };
     }
     // After a reconnection, go back to the same room.
     const room = this.state.roomCode ?? this.options.room;
@@ -400,6 +448,9 @@ export class LiveSession {
         break;
       case 'utterance':
         this.onUtterance(message);
+        break;
+      case 'skipped':
+        this.onSkipped(message);
         break;
       case 'translation':
         this.onTranslation(message);
@@ -430,7 +481,7 @@ export class LiveSession {
       const speaker = wanted === 'auto' && !message.autoDetect ? message.speaker : wanted;
       this.update({ autoDetect: message.autoDetect, speaker });
       // The server starts from its default; repeat a choice made before a reconnection.
-      if (speaker && speaker !== message.speaker) this.connection?.send({ type: 'speaker', speaker });
+      if (speaker && speaker !== message.speaker) this.backend?.send({ type: 'speaker', speaker });
     } else if (message.room) {
       const created = this.state.roomCode === undefined && this.options.room === undefined;
       this.update({ roomCode: message.room, inviteOpen: created || this.state.inviteOpen });
@@ -508,10 +559,14 @@ export class LiveSession {
       text: message.text,
       mine,
       translation: translationLang ? { lang: translationLang, text: '', state: 'pending' } : undefined,
+      skipped: undefined,
     };
-    const entries = [...this.state.entries, entry];
+    // Something skipped and then accepted stays where it was.
+    const accepted = this.state.entries.some((existing) => existing.id === message.id);
     const patch: Partial<LiveState> = {
-      entries: entries.length > MAX_ENTRIES ? entries.slice(-MAX_ENTRIES) : entries,
+      entries: accepted
+        ? this.state.entries.map((existing) => (existing.id === message.id ? entry : existing))
+        : withEntry(this.state.entries, entry),
       interims: this.state.interims.filter((interim) => interim.key !== interimKey),
     };
     if (solo && mine) {
@@ -527,6 +582,24 @@ export class LiveSession {
       this.toSpeak.add(message.id);
       this.queue.expect(message.id);
     }
+  }
+
+  private onSkipped(message: SkippedMessage): void {
+    const entry: FeedEntry = {
+      id: message.id,
+      speaker: this.speakerName(message.speakerId, 'Them'),
+      lang: message.lang,
+      text: message.text,
+      mine: this.isMine(message.speakerId),
+      translation: undefined,
+      skipped: { reason: message.reason, state: 'skipped' },
+    };
+    let entries = withEntry(this.state.entries, entry);
+    // The server forgets the oldest, so it can no longer be translated.
+    this.skips.push(message.id);
+    const forgotten = this.skips.length > SKIPPED_KEPT ? this.skips.shift() : undefined;
+    if (forgotten !== undefined) entries = markSkipped(entries, (id) => id === forgotten, 'gone');
+    this.update({ entries });
   }
 
   private onTranslation(message: TranslationMessage): void {
@@ -611,9 +684,13 @@ export class LiveSession {
     this.updateStatus();
   }
 
-  /** The connection dropped: translations still on their way will not arrive. */
+  /**
+   * The connection dropped: translations still on their way will not arrive, and the
+   * server has forgotten what it skipped.
+   */
   private interruptPending(): void {
-    const entries = this.state.entries.map((entry): FeedEntry => {
+    this.skips = [];
+    const entries = markSkipped(this.state.entries, () => true, 'gone').map((entry): FeedEntry => {
       const translation = entry.translation;
       if (translation?.state === 'pending') {
         return {
@@ -629,11 +706,21 @@ export class LiveSession {
 
   // ---------------------------------------------------------------- controls
 
+  /** One phone: translates something that was skipped after all. */
+  accept(id: string): void {
+    const entry = this.state.entries.find((candidate) => candidate.id === id);
+    if (this.ended || this.connectionState !== 'ready' || entry?.skipped?.state !== 'skipped') return;
+    this.skips = this.skips.filter((skip) => skip !== id);
+    this.update({ entries: markSkipped(this.state.entries, (candidate) => candidate === id, 'accepting') });
+    // The utterance comes back with the same id (see onUtterance).
+    this.backend?.send({ type: 'accept', id });
+  }
+
   selectSpeaker(selection: SpeakerSelection): void {
     if (this.ended || this.state.speaker === selection) return;
     this.update({ speaker: selection });
     // If not connected, onReady sends it once the connection is back.
-    this.connection?.send({ type: 'speaker', speaker: selection });
+    this.backend?.send({ type: 'speaker', speaker: selection });
   }
 
   setMuted(muted: boolean): void {
@@ -711,7 +798,7 @@ export class LiveSession {
     const connected = await earphonesConnected();
     if (this.ended || connected || !this.earphones) return;
     if (this.mic?.input.input === 'earphones') {
-      this.end({ message: 'The earphones were disconnected. Start again to continue.' });
+      this.end({ message: 'The earphones were disconnected. Start again to continue.', code: 'earphones' });
       return;
     }
     this.earphones = false;
@@ -719,9 +806,7 @@ export class LiveSession {
     this.voice.reset();
     this.speech.cancel();
     if (this.settings.output === 'earphones') {
-      this.toast(
-        'The earphones were disconnected, so translations play on the phone speaker. The microphone pauses while it speaks.',
-      );
+      this.toast('The earphones were disconnected, so translations play on the phone speaker.');
     }
     this.updateMic();
   }
@@ -753,7 +838,7 @@ export class LiveSession {
     const phoneTalking = this.speakerOutput() && (this.speaking || this.speakerTail) && !holding;
     const mode: MicMode = userOff ? 'off' : phoneTalking ? 'silent' : 'live';
     // The turn is over: have what was just said transcribed and translated now.
-    if (mode === 'off' && mic.mode !== 'off') this.connection?.send({ type: 'flush' });
+    if (mode === 'off' && mic.mode !== 'off') this.backend?.send({ type: 'flush' });
     mic.mode = mode;
     if (this.state.micMode !== mode) this.update({ micMode: mode });
     this.updateStatus();
@@ -766,13 +851,18 @@ export class LiveSession {
 
   private status(): [string, StatusTone] {
     if (!this.mic) return ['Starting the microphone…', 'busy'];
-    if (this.connectionState === 'connecting') return ['Connecting…', 'busy'];
+    if (this.connectionState === 'connecting') {
+      const preparing = this.options.server === undefined && this.settings.engine === 'local' ? 'Getting ready…' : 'Connecting…';
+      return [this.progress ?? preparing, 'busy'];
+    }
     if (this.connectionState === 'reconnecting') return ['Connection lost. Reconnecting…', 'busy'];
     if (this.recognizer === 'reconnecting') return ['Reconnecting speech recognition…', 'busy'];
     if (this.recognizer === 'starting') return ['Starting…', 'busy'];
-    if (this.state.muted) return ['Muted', 'idle'];
+    if (this.state.muted) return ['Paused', 'idle'];
     if (this.speaking && this.speakerOutput()) return ['Speaking…', 'speaking'];
-    if (this.settings.talkMode === 'hold' && !this.state.holding) return ['Hold to talk', 'idle'];
+    if (this.settings.talkMode === 'hold' && !this.state.holding) {
+      return [this.settings.mode === 'solo' ? 'Hold a button to talk' : 'Hold to talk', 'idle'];
+    }
     return ['Listening', 'live'];
   }
 
@@ -782,7 +872,33 @@ export class LiveSession {
   }
 }
 
+function withEntry(entries: readonly FeedEntry[], entry: FeedEntry): readonly FeedEntry[] {
+  const longer = [...entries, entry];
+  return longer.length > MAX_ENTRIES ? longer.slice(-MAX_ENTRIES) : longer;
+}
+
+/** Changes the state of skipped entries, unless they are gone already. */
+function markSkipped(
+  entries: readonly FeedEntry[],
+  which: (id: string) => boolean,
+  state: SkippedState,
+): readonly FeedEntry[] {
+  return entries.map((entry) =>
+    entry.skipped && entry.skipped.state !== 'gone' && which(entry.id)
+      ? { ...entry, skipped: { ...entry.skipped, state } }
+      : entry,
+  );
+}
+
 function micLabel(input: CaptureInput): string {
   if (input.input === 'test') return `Test recording: ${input.name}`;
   return input.name || 'Microphone';
+}
+
+/** Gives the engines' errors a code, so the screen can offer the right way out. */
+function withCode(reason: EndReason): EndReason {
+  if (reason.code) return reason;
+  if (/rejected the API key/i.test(reason.message)) return { ...reason, code: 'keys' };
+  if (/could not be downloaded|still downloading/i.test(reason.message)) return { ...reason, code: 'download' };
+  return reason;
 }

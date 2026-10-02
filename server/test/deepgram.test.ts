@@ -4,8 +4,9 @@ import type { AddressInfo } from 'node:net';
 import { after, afterEach, before, describe, it } from 'node:test';
 import { WebSocketServer } from 'ws';
 import type WebSocket from 'ws';
-import { DeepgramProvider } from '../src/stt/deepgram.ts';
-import type { SttEvents, SttResult, SttStatus, SttStream } from '../src/stt/types.ts';
+import { DeepgramProvider } from '../../shared/pipeline/stt/deepgram.ts';
+import type { SttEvents, SttResult, SttStatus, SttStream } from '../../shared/pipeline/stt/types.ts';
+import { openDeepgramSocket } from '../src/deepgram-socket.ts';
 import { eventually } from './fakes.ts';
 
 interface Connection {
@@ -125,6 +126,8 @@ describe('Deepgram live transcription', () => {
       model: 'nova-3',
       fallbackModel: 'nova-2',
       url: deepgram.url,
+      openSocket: openDeepgramSocket,
+      keyHint: 'Check DEEPGRAM_API_KEY on the server.',
     });
     const events = new Recorder();
     const stream = provider.open({ language }, events);
@@ -274,6 +277,32 @@ describe('Deepgram live transcription', () => {
     const second = deepgram.connections[1]!;
     await eventually(() => second.audio.length);
     assert.equal(second.audio[0]!.length, 960);
+  });
+
+  it('times words from the first audio of the stream, across reconnections', async () => {
+    const { stream, events } = open('en-US');
+    stream.sendAudio(Buffer.alloc(32_000)); // 1 s while connecting
+    await eventually(() => events.count('live'));
+    stream.sendAudio(Buffer.alloc(32_000));
+    const words = (...spans: Array<[number, number]>) => spans.map(([start, end]) => ({ word: 'x', start, end }));
+    deepgram.connections[0]!.socket.send(JSON.stringify(results('one two', {}, words([0.5, 0.7], [0.75, 0.9]))));
+    await eventually(() => events.results.length === 1);
+
+    deepgram.connections[0]!.socket.terminate();
+    await eventually(() => events.count('reconnecting'));
+    stream.sendAudio(Buffer.alloc(16_000)); // half a second while reconnecting
+    await eventually(() => events.count('live') === 2, 3_000);
+    // The new connection counts from its own first audio, two seconds into the stream.
+    deepgram.connections[1]!.socket.send(JSON.stringify(results('three', {}, words([0.1, 0.4]))));
+    await eventually(() => events.results.length === 2);
+
+    assert.deepEqual(
+      events.results.map(({ start, end }) => [start, end]),
+      [
+        [0.5, 0.9],
+        [2.1, 2.4],
+      ],
+    );
   });
 
   it('sends KeepAlive while nobody is speaking', async (t) => {

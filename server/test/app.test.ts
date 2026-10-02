@@ -7,11 +7,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import WebSocket from 'ws';
+import { silentLogger } from '../../shared/pipeline/log.ts';
 import { CLOSE_SESSION_ENDED } from '../../shared/protocol.ts';
 import type { ServerMessage } from '../../shared/protocol.ts';
 import { createApp } from '../src/app.ts';
 import type { App } from '../src/app.ts';
-import { silentLogger } from '../src/log.ts';
 import { FakeSttProvider, FakeTranslator, eventually } from './fakes.ts';
 
 describe('server app', () => {

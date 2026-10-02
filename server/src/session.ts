@@ -1,15 +1,15 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { isSupportedLanguage, sameLanguage } from '../../shared/languages.ts';
+import type { Logger } from '../../shared/pipeline/log.ts';
+import { SoloConversation } from '../../shared/pipeline/solo.ts';
+import { UtteranceSegmenter } from '../../shared/pipeline/stt/segmenter.ts';
+import type { SttProvider, SttStream } from '../../shared/pipeline/stt/types.ts';
+import type { Translator } from '../../shared/pipeline/translate/types.ts';
+import type { SpeechSynthesizer } from '../../shared/pipeline/voice/types.ts';
 import { AUDIO_SAMPLE_RATE } from '../../shared/protocol.ts';
 import type { ErrorCode, ServerMessage, SpeakerSelection } from '../../shared/protocol.ts';
 import { normalizeRoomCode } from '../../shared/room-code.ts';
-import type { Logger } from './log.ts';
 import type { Room, RoomMember, RoomRegistry } from './rooms.ts';
-import { SoloConversation } from './solo.ts';
-import { UtteranceSegmenter } from './stt/segmenter.ts';
-import type { SttProvider, SttStream } from './stt/types.ts';
-import type { Translator } from './translate/types.ts';
-import type { SpeechSynthesizer } from './voice/types.ts';
 
 export interface Transport {
   send(message: ServerMessage): void;
@@ -71,6 +71,9 @@ export class ClientSession {
       case 'flush':
         this.solo?.flush();
         this.roomStream?.finalize();
+        return;
+      case 'accept':
+        if (typeof message!['id'] === 'string') this.solo?.accept(message!['id']);
         return;
       default:
         this.send({ type: 'error', message: 'Invalid message.', fatal: false });
@@ -147,6 +150,8 @@ export class ClientSession {
       send: (m) => this.send(m),
       onFatal: (error) => this.fail(error.message),
       log: this.deps.log,
+      newId: randomUUID,
+      nearbyOnly: message['nearbyOnly'] === true,
     });
     this.send({
       type: 'ready',

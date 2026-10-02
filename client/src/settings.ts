@@ -29,6 +29,8 @@ export interface Settings {
   /** Shown to the others in a room. */
   name: string;
   talkMode: TalkMode;
+  /** One phone: skip speech much quieter than the two people at the phone, e.g. other tables. */
+  nearbyOnly: boolean;
   output: Output;
   voice: Voice;
   /** Microphone deviceId, or '' for the system default. */
@@ -76,6 +78,7 @@ export function defaultSettings(browserLanguages: readonly string[]): Settings {
     theirLang: partnerLanguage(myLang, browserLanguages),
     name: '',
     talkMode: 'handsfree',
+    nearbyOnly: true,
     output: 'earphones',
     voice: 'natural',
     micId: '',
@@ -110,6 +113,7 @@ export function loadSettings(store: KeyValueStore | undefined, browserLanguages:
     theirLang,
     name: text(saved['name'], MAX_NAME_LENGTH),
     talkMode: oneOf(saved['talkMode'], ['handsfree', 'hold'], defaults.talkMode),
+    nearbyOnly: typeof saved['nearbyOnly'] === 'boolean' ? saved['nearbyOnly'] : defaults.nearbyOnly,
     output: oneOf(saved['output'], ['earphones', 'speaker'], defaults.output),
     voice: oneOf(saved['voice'], ['natural', 'phone'], defaults.voice),
     micId: text(saved['micId'], 500),

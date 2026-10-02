@@ -5,14 +5,14 @@ import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 import { LANGUAGES } from '../../shared/languages.ts';
+import { errorDetail } from '../../shared/pipeline/deepinfra.ts';
+import { DeepInfraTranslator } from '../../shared/pipeline/translate/deepinfra.ts';
+import { SYSTEM_PROMPT, buildUserPrompt } from '../../shared/pipeline/translate/prompt.ts';
+import { TranslationError, TranslationRefusedError } from '../../shared/pipeline/translate/types.ts';
+import type { TranslationRequest } from '../../shared/pipeline/translate/types.ts';
+import { DEEPINFRA_VOICE_LANGUAGES, DeepInfraSpeech } from '../../shared/pipeline/voice/deepinfra.ts';
+import { SpeechError } from '../../shared/pipeline/voice/types.ts';
 import { splitForSpeech } from '../../shared/speech-text.ts';
-import { errorDetail } from '../src/deepinfra.ts';
-import { DeepInfraTranslator } from '../src/translate/deepinfra.ts';
-import { SYSTEM_PROMPT, buildUserPrompt } from '../src/translate/prompt.ts';
-import { TranslationError, TranslationRefusedError } from '../src/translate/types.ts';
-import type { TranslationRequest } from '../src/translate/types.ts';
-import { DEEPINFRA_VOICE_LANGUAGES, DeepInfraSpeech } from '../src/voice/deepinfra.ts';
-import { SpeechError } from '../src/voice/types.ts';
 
 interface CapturedRequest {
   url: string;
@@ -92,7 +92,14 @@ const REQUEST: TranslationRequest = {
 describe('DeepInfraTranslator', () => {
   const api = fakeApi();
   const translator = (options: { timeoutMs?: number; baseUrl?: string } = {}) =>
-    new DeepInfraTranslator({ apiKey: 'test-key', model: 'google/gemma-4-31B-it-turbo', baseUrl: api.url, ...options });
+    new DeepInfraTranslator({
+      apiKey: 'test-key',
+      model: 'google/gemma-4-31B-it-turbo',
+      baseUrl: api.url,
+      keyHint: 'Check DEEPINFRA_API_KEY on the server.',
+      modelHint: 'Check TRANSLATION_MODEL on the server.',
+      ...options,
+    });
 
   it('streams the translation from the chat API', async () => {
     api.handle = (_request, res) =>
@@ -229,7 +236,14 @@ describe('DeepInfraTranslator', () => {
 describe('DeepInfraSpeech', () => {
   const api = fakeApi();
   const speech = (options: { timeoutMs?: number; baseUrl?: string } = {}) =>
-    new DeepInfraSpeech({ apiKey: 'test-key', baseUrl: api.url, ...options });
+    new DeepInfraSpeech({
+      apiKey: 'test-key',
+      baseUrl: api.url,
+      keyHint: 'Check DEEPINFRA_API_KEY on the server.',
+      ...options,
+    });
+  /** The clips, base64-decoded. */
+  const decode = (clips: string[]) => clips.map((clip) => Buffer.from(clip, 'base64').toString());
   /** Answers like DeepInfra's inference API, with the request's text as the "audio". */
   const sendAudio = (request: CapturedRequest, res: ServerResponse) =>
     sendJson(res, 200, { audio: `data:audio/mp3;base64,${Buffer.from(`mp3:${String(request.body['text'])}`).toString('base64')}` });
@@ -238,7 +252,7 @@ describe('DeepInfraSpeech', () => {
     api.handle = sendAudio;
     const clips = await speech().synthesize({ text: 'Where is the station?', lang: 'en-US' });
 
-    assert.deepEqual(clips.map(String), ['mp3:Where is the station?']);
+    assert.deepEqual(decode(clips), ['mp3:Where is the station?']);
     const request = api.requests.at(-1)!;
     assert.equal(request.url, '/v1/inference/hexgrad/Kokoro-82M');
     assert.equal(request.headers.authorization, 'Bearer test-key');
@@ -296,7 +310,7 @@ describe('DeepInfraSpeech', () => {
       waiting.reverse().forEach(([request, res], index) => setTimeout(() => sendAudio(request, res), index * 20));
     };
     const clips = await speech().synthesize({ text, lang: 'de' });
-    assert.deepEqual(clips.map(String), pieces.map((piece) => `mp3:${piece}`));
+    assert.deepEqual(decode(clips), pieces.map((piece) => `mp3:${piece}`));
   });
 
   it('refuses text too long to read and reads nothing for empty text', async () => {

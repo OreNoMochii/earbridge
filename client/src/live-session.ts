@@ -2,7 +2,7 @@
 // connection, the transcript and the spoken translations together.
 
 import { sameLanguage } from '../../shared/languages.ts';
-import { SOLO_ME } from '../../shared/protocol.ts';
+import { SKIPPED_KEPT, SOLO_ME } from '../../shared/protocol.ts';
 import type { ClientMessage, Participant, ServerMessage, SpeakerSelection } from '../../shared/protocol.ts';
 import { Microphone, MicrophoneError } from './audio/mic.ts';
 import type { MicMode } from './audio/mic.ts';
@@ -26,6 +26,7 @@ const HOLD_TAIL_MS = 250;
 type ReadyMessage = Extract<ServerMessage, { type: 'ready' }>;
 type InterimMessage = Extract<ServerMessage, { type: 'interim' }>;
 type UtteranceMessage = Extract<ServerMessage, { type: 'utterance' }>;
+type SkippedMessage = Extract<ServerMessage, { type: 'skipped' }>;
 type TranslationMessage = Extract<ServerMessage, { type: 'translation' }>;
 type SpeechMessage = Extract<ServerMessage, { type: 'speech' }>;
 
@@ -59,6 +60,8 @@ export class LiveSession {
 
   // One-phone mode: who the recognizer should expect, as chosen here.
   private speaker: SpeakerSelection | undefined;
+  /** The latest skipped utterances, oldest first, which can still be translated. */
+  private skips: string[] = [];
 
   // Room mode. Every reconnection gets a new id, and the server may briefly still list
   // an old one, so all of them count as "me".
@@ -193,7 +196,8 @@ export class LiveSession {
     const token = settings.token.trim() || undefined;
     const voiceLangs = voiceLanguages(settings);
     if (settings.mode === 'solo') {
-      return { type: 'hello', mode: 'solo', myLang: settings.myLang, theirLang: settings.theirLang, voiceLangs, token };
+      const { myLang, theirLang, nearbyOnly } = settings;
+      return { type: 'hello', mode: 'solo', myLang, theirLang, voiceLangs, nearbyOnly, token };
     }
     // After a reconnection, go back to the same room.
     const room = this.roomCode ?? this.options.room;
@@ -213,6 +217,9 @@ export class LiveSession {
         break;
       case 'utterance':
         this.onUtterance(message);
+        break;
+      case 'skipped':
+        this.onSkipped(message);
         break;
       case 'translation':
         this.onTranslation(message);
@@ -326,6 +333,24 @@ export class LiveSession {
     }
   }
 
+  private onSkipped(message: SkippedMessage): void {
+    const { id, lang, text, reason } = message;
+    this.view.feed.addSkipped({ id, lang, text, reason }, () => this.accept(id));
+    // The server forgets the oldest, so it can no longer be translated.
+    this.skips.push(id);
+    const forgotten = this.skips.length > SKIPPED_KEPT ? this.skips.shift() : undefined;
+    if (forgotten !== undefined) this.view.feed.markSkipped(forgotten, 'gone');
+  }
+
+  /** One phone: translates something that was skipped after all. */
+  private accept(id: string): void {
+    if (this.ended || this.connectionState !== 'ready' || !this.skips.includes(id)) return;
+    this.skips = this.skips.filter((skip) => skip !== id);
+    this.view.feed.markSkipped(id, 'accepting');
+    // The utterance comes back with the same id, and takes the skipped one's place.
+    this.connection?.send({ type: 'accept', id });
+  }
+
   private onTranslation(message: TranslationMessage): void {
     this.view.feed.updateTranslation(message.id, message.text, message.done, message.error);
     if (this.forPartner.has(message.id)) {
@@ -384,6 +409,7 @@ export class LiveSession {
       this.queue.skipPending();
       this.toSpeak.clear();
       this.forPartner.clear();
+      this.skips = [];
       this.view.feed.clearInterims();
       this.view.feed.interruptPending();
     }

@@ -1,4 +1,4 @@
-import type { ServerMessage } from '../../../shared/protocol.ts';
+import type { ServerMessage } from '../../protocol.ts';
 import type { Logger } from '../log.ts';
 import { SpeechError } from './types.ts';
 import type { SpeechRequest, SpeechSynthesizer } from './types.ts';
@@ -21,7 +21,7 @@ export async function deliverSpeech(
   try {
     const clips = await synthesizer.synthesize(request);
     if (request.signal?.aborted) return;
-    deliver({ ...base, audio: clips.map((clip) => clip.toString('base64')) });
+    deliver({ ...base, audio: clips });
   } catch (error) {
     if (request.signal?.aborted) return;
     log.warn(`speech (${request.lang}) failed`, error);

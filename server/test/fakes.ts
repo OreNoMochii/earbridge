@@ -1,16 +1,16 @@
+import { silentLogger } from '../../shared/pipeline/log.ts';
+import type { SttEvents, SttProvider, SttStream, SttStreamOptions } from '../../shared/pipeline/stt/types.ts';
+import type { TranslationRequest, Translator } from '../../shared/pipeline/translate/types.ts';
+import type { SpeechRequest, SpeechSynthesizer } from '../../shared/pipeline/voice/types.ts';
 import type { ServerMessage } from '../../shared/protocol.ts';
-import { silentLogger } from '../src/log.ts';
 import { RoomRegistry } from '../src/rooms.ts';
 import { ClientSession } from '../src/session.ts';
 import type { SessionDeps } from '../src/session.ts';
-import type { SttEvents, SttProvider, SttStream, SttStreamOptions } from '../src/stt/types.ts';
-import type { TranslationRequest, Translator } from '../src/translate/types.ts';
-import type { SpeechRequest, SpeechSynthesizer } from '../src/voice/types.ts';
 
 export class FakeSttStream implements SttStream {
   readonly language: string;
   readonly events: SttEvents;
-  readonly audio: Buffer[] = [];
+  readonly audio: Uint8Array[] = [];
   finalized = 0;
   closed = false;
 
@@ -19,7 +19,7 @@ export class FakeSttStream implements SttStream {
     this.events = events;
   }
 
-  sendAudio(chunk: Buffer): void {
+  sendAudio(chunk: Uint8Array): void {
     this.audio.push(chunk);
   }
 
@@ -33,14 +33,14 @@ export class FakeSttStream implements SttStream {
     this.events.onClosed();
   }
 
-  /** The recognizer heard a complete utterance. */
-  say(text: string, wordLanguages: string[] = []): void {
-    this.events.onResult({ text, isFinal: true, speechFinal: true, fromFinalize: false, wordLanguages });
+  /** The recognizer heard a complete utterance, said between two times (seconds into the stream). */
+  say(text: string, wordLanguages: string[] = [], timing: { start: number; end: number } | object = {}): void {
+    this.events.onResult({ text, isFinal: true, speechFinal: true, fromFinalize: false, wordLanguages, ...timing });
   }
 
   /** The recognizer is still hearing this. */
-  hear(text: string, wordLanguages: string[] = []): void {
-    this.events.onResult({ text, isFinal: false, speechFinal: false, fromFinalize: false, wordLanguages });
+  hear(text: string, wordLanguages: string[] = [], timing: { start: number; end: number } | object = {}): void {
+    this.events.onResult({ text, isFinal: false, speechFinal: false, fromFinalize: false, wordLanguages, ...timing });
   }
 }
 
@@ -102,12 +102,12 @@ export class FakeSynthesizer implements SpeechSynthesizer {
     return release;
   }
 
-  async synthesize(request: SpeechRequest): Promise<Buffer[]> {
+  async synthesize(request: SpeechRequest): Promise<string[]> {
     this.requests.push(request);
     const failure = this.failWith;
     await (this.held ?? Promise.resolve());
     if (failure) throw failure;
-    return [Buffer.from(`${request.lang}:${request.text}`)];
+    return [Buffer.from(`${request.lang}:${request.text}`).toString('base64')];
   }
 }
 

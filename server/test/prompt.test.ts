@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { SYSTEM_PROMPT, buildUserPrompt } from '../src/translate/prompt.ts';
+import { SYSTEM_PROMPT, buildUserPrompt } from '../../shared/pipeline/translate/prompt.ts';
 
 describe('translation prompt', () => {
   it('names both languages and wraps the utterance', () => {

@@ -11,11 +11,11 @@ export interface SpeechSynthesizer {
   /** Whether there is a voice for this language. */
   supports(lang: string): boolean;
   /**
-   * Resolves with encoded audio clips (such as MP3) to play one after the other. Rejects
-   * with a SpeechError (whose message can be shown in the app) or, when `signal` is
-   * aborted, with an abort error.
+   * Resolves with audio clips (such as MP3), base64-encoded, to play one after the
+   * other. Rejects with a SpeechError (whose message can be shown in the app) or, when
+   * `signal` is aborted, with an abort error.
    */
-  synthesize(request: SpeechRequest): Promise<Buffer[]>;
+  synthesize(request: SpeechRequest): Promise<string[]>;
 }
 
 /** A text-to-speech failure with a message that is safe and useful to show in the app. */

@@ -57,6 +57,7 @@ describe('settings', () => {
         theirLang: undefined,
         name: '',
         talkMode: 'handsfree',
+        nearbyOnly: true,
         output: 'earphones',
         voice: 'natural',
         micId: '',
@@ -73,6 +74,7 @@ describe('settings', () => {
       theirLang: 'ja',
       name: 'Sam',
       talkMode: 'hold' as const,
+      nearbyOnly: false,
       output: 'speaker' as const,
       voice: 'phone' as const,
       micId: 'abc',
@@ -90,6 +92,7 @@ describe('settings', () => {
         theirLang: 'fr',
         name: 'x'.repeat(100),
         talkMode: 42,
+        nearbyOnly: 'no',
         output: null,
         voice: 'robot',
       }),
@@ -100,6 +103,7 @@ describe('settings', () => {
     assert.equal(settings.theirLang, 'it', 'the two languages must differ');
     assert.equal(settings.name.length, 40);
     assert.equal(settings.talkMode, 'handsfree');
+    assert.equal(settings.nearbyOnly, true);
     assert.equal(settings.output, 'earphones');
     assert.equal(settings.voice, 'natural');
 

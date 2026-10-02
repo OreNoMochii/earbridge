@@ -12,10 +12,10 @@ export interface Invite {
 }
 
 export function inviteUrl(server: string, room: string): string {
-  return isSecure(server) ? `${server}/?room=${room}` : `earbridge://join?room=${room}&server=${encodeURIComponent(server)}`;
+  return isSecure(server) ? `${server}/?room=${room}` : `alo://join?room=${room}&server=${encodeURIComponent(server)}`;
 }
 
-/** Reads earbridge://join?room=…&server=…, or a web app invite link. */
+/** Reads alo://join?room=…&server=… (or the older earbridge://), or a web app invite link. */
 export function parseInvite(url: string): Invite | undefined {
   const room = normalizeRoomCode(param(url, 'room') ?? '');
   if (!room) return undefined;

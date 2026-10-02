@@ -1,4 +1,4 @@
-// iPhone only: how EarBridge shares the phone's audio. It records and plays at the same
+// iPhone only: how Alo shares the phone's audio. It records and plays at the same
 // time, and chooses which microphone listens: the phone's (which keeps Bluetooth
 // earphones in full-quality A2DP) or the earphones' (Bluetooth hands-free, or a wired
 // headset's microphone).

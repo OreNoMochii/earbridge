@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { UtteranceSegmenter } from '../src/stt/segmenter.ts';
-import type { SttResult } from '../src/stt/types.ts';
+import { UtteranceSegmenter } from '../../shared/pipeline/stt/segmenter.ts';
+import type { SpeechDetails } from '../../shared/pipeline/stt/segmenter.ts';
+import type { SttResult } from '../../shared/pipeline/stt/types.ts';
 
 function setup(maxWords?: number) {
   const interims: Array<[string, string | undefined]> = [];
@@ -78,5 +79,23 @@ describe('UtteranceSegmenter', () => {
       result('OK vamos', { isFinal: true, speechFinal: true, wordLanguages: ['en', 'es'] }),
     );
     assert.deepEqual(utterances, [['Hola amigo OK vamos', 'es']]);
+  });
+
+  it('reports every language heard and when the speech was, utterance by utterance', () => {
+    const details: SpeechDetails[] = [];
+    const segmenter = new UtteranceSegmenter({
+      interim: (_text, _lang, speech) => details.push(speech),
+      utterance: (_text, _lang, speech) => details.push(speech),
+    });
+    segmenter.handleResult(result('Hola amigo', { isFinal: true, wordLanguages: ['es', 'es'], start: 1.2, end: 2 }));
+    segmenter.handleResult(result('OK', { wordLanguages: ['en'], start: 2.1, end: 2.4 }));
+    segmenter.handleResult(result('OK', { isFinal: true, speechFinal: true, wordLanguages: ['en'], start: 2.1, end: 2.5 }));
+    segmenter.handleResult(result('Thanks', { isFinal: true, speechFinal: true }));
+    assert.deepEqual(details, [
+      { languages: new Map([['es', 2]]), start: 1.2, end: 2 },
+      { languages: new Map([['es', 2], ['en', 1]]), start: 1.2, end: 2.4 },
+      { languages: new Map([['es', 2], ['en', 1]]), start: 1.2, end: 2.5 },
+      { languages: new Map() },
+    ]);
   });
 });

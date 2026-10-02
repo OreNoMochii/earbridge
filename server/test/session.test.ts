@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { TranslationRefusedError } from '../../shared/pipeline/translate/types.ts';
+import { SpeechError } from '../../shared/pipeline/voice/types.ts';
 import { sanitizeName } from '../src/session.ts';
-import { TranslationRefusedError } from '../src/translate/types.ts';
-import { SpeechError } from '../src/voice/types.ts';
 import { connect, createDeps, settle } from './fakes.ts';
 
 const pcm = (bytes: number) => Buffer.alloc(bytes);
@@ -103,6 +103,36 @@ describe('solo conversation (one phone)', () => {
     client.send({ type: 'hello', mode: 'solo', myLang: 'fr', theirLang: 'de' });
     client.send({ type: 'flush' });
     assert.equal(stt.last.finalized, 1);
+  });
+
+  it('skips distant speech when the phone asks, and translates it if the phone accepts it', async () => {
+    const { deps, stt } = createDeps();
+    const client = connect(deps);
+    client.send({ type: 'hello', mode: 'solo', myLang: 'en-US', theirLang: 'es', nearbyOnly: true });
+    const tenth = (value: number) => Buffer.from(new Int16Array(1600).fill(value).buffer);
+    for (let i = 0; i < 30; i++) client.session.handleAudio(tenth(8000));
+    for (let i = 0; i < 10; i++) client.session.handleAudio(tenth(500)); // 24 dB quieter
+    for (const [i, text] of ['One', 'Two', 'Three'].entries()) stt.last.say(text, ['en'], { start: i, end: i + 1 });
+    stt.last.say('Lejos', ['es'], { start: 3, end: 4 });
+    await settle();
+
+    assert.deepEqual(
+      client.of('utterance').map((m) => m.text),
+      ['One', 'Two', 'Three'],
+    );
+    const [skipped] = client.of('skipped');
+    assert.deepEqual(skipped && [skipped.speakerId, skipped.lang, skipped.text, skipped.reason], [
+      'them',
+      'es',
+      'Lejos',
+      'distant',
+    ]);
+    client.send({ type: 'accept', id: skipped?.id });
+    client.send({ type: 'accept', id: 42 });
+    await settle();
+    assert.deepEqual(client.of('utterance').at(-1)?.text, 'Lejos');
+    assert.equal(client.of('translation').filter((m) => m.done && m.id === skipped?.id).length, 1);
+    assert.deepEqual(client.of('error'), []);
   });
 
   it('rejects two identical languages', () => {

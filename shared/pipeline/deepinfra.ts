@@ -25,6 +25,11 @@ function plainMessage(value: unknown): string | undefined {
   return undefined;
 }
 
+/** `message`, followed by where to fix the problem when there is a hint. */
+export function withHint(message: string, hint: string | undefined): string {
+  return hint ? `${message} ${hint}` : message;
+}
+
 /** The detail of an error response, wrapped to become the `cause` of a user-facing error. */
 export async function errorCause(response: Response): Promise<Error | undefined> {
   try {

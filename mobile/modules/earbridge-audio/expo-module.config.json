@@ -1,6 +1,12 @@
 {
-  "platforms": ["android"],
+  "platforms": [
+    "android"
+  ],
   "android": {
-    "modules": ["expo.modules.earbridgeaudio.EarbridgeAudioModule"]
+    "modules": [
+      "expo.modules.earbridgeaudio.EarbridgeAudioModule",
+      "expo.modules.earbridgeaudio.EarbridgeOnDeviceModule",
+      "expo.modules.earbridgeaudio.EarbridgeVoiceModule"
+    ]
   }
 }

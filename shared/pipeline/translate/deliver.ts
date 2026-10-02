@@ -1,4 +1,4 @@
-import type { ServerMessage } from '../../../shared/protocol.ts';
+import type { ServerMessage } from '../../protocol.ts';
 import type { Logger } from '../log.ts';
 import { TranslationError } from './types.ts';
 import type { TranslationRequest, Translator } from './types.ts';

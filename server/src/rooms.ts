@@ -1,13 +1,13 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import { sameLanguage } from '../../shared/languages.ts';
 import type { ErrorCode, Participant, ServerMessage } from '../../shared/protocol.ts';
+import { ConversationHistory } from '../../shared/pipeline/history.ts';
+import type { Logger } from '../../shared/pipeline/log.ts';
+import { deliverTranslation } from '../../shared/pipeline/translate/deliver.ts';
+import type { TranslationRequest, Translator } from '../../shared/pipeline/translate/types.ts';
+import { deliverSpeech } from '../../shared/pipeline/voice/deliver.ts';
+import type { SpeechSynthesizer } from '../../shared/pipeline/voice/types.ts';
 import { ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from '../../shared/room-code.ts';
-import { ConversationHistory } from './history.ts';
-import type { Logger } from './log.ts';
-import { deliverTranslation } from './translate/deliver.ts';
-import type { TranslationRequest, Translator } from './translate/types.ts';
-import { deliverSpeech } from './voice/deliver.ts';
-import type { SpeechSynthesizer } from './voice/types.ts';
 
 export const MAX_ROOM_SIZE = 10;
 

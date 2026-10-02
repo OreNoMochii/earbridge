@@ -50,6 +50,12 @@ export function languageLabel(code: string): string {
   return native ? `${languageName(code)} · ${native}` : languageName(code);
 }
 
+/** "日本語 · Japanese", or just "English (US)": the language's own name first. */
+export function nativeLabel(code: string): string {
+  const native = NATIVE_NAMES[code];
+  return native ? `${native} · ${plainLanguageName(code)}` : languageName(code);
+}
+
 /** "Portuguese (Brazil)" -> "Portuguese": the region matters for speech, not for reading. */
 export function plainLanguageName(code: string): string {
   return languageName(code).replace(/ \(.*\)$/, '');

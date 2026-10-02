@@ -1,39 +1,43 @@
-// The WebSocket to the EarBridge server: sends the hello, reconnects with backoff, and
-// tells apart a session the server ended from a dropped connection. A port of the web
-// app's client/src/connection.ts.
+// The WebSocket to the computer running Alo's server: sends the hello, reconnects with
+// backoff, and tells apart a session the server ended from a dropped connection. A port of
+// the web app's client/src/connection.ts.
 
 import { AppState } from 'react-native';
 import type { NativeEventSubscription } from 'react-native';
 
 import { CLOSE_SESSION_ENDED } from '../../shared/protocol.ts';
 import type { ClientMessage, ErrorCode, ServerMessage } from '../../shared/protocol.ts';
+import type { Backend, BackendEvents } from './engines/backend.ts';
 
 export type ConnectionState = 'connecting' | 'ready' | 'reconnecting';
 
+/**
+ * Why a conversation ended, for the screen to offer the right way out: the server's codes,
+ * plus unreachable (the server could not be reached at all), microphone (not allowed),
+ * earphones (disconnected while the conversation needed them), keys (an online service
+ * rejected a key) and download (on-phone speech recognition could not be downloaded).
+ */
+export type EndCode = ErrorCode | 'unreachable' | 'microphone' | 'earphones' | 'keys' | 'download';
+
 export interface EndReason {
   message: string;
-  /** From the server, or 'unreachable' when the server could not be reached at all. */
-  code?: ErrorCode | 'unreachable' | undefined;
+  code?: EndCode | undefined;
 }
 
-export interface ConnectionOptions {
+export interface ConnectionOptions extends BackendEvents {
   /** The WebSocket address, e.g. ws://192.168.1.20:8787/ws. */
   url: string;
   /** The server's address as shown to the user, for the error when it cannot be reached. */
   serverLabel: string;
   /** The first message on every (re)connection. */
   hello(): ClientMessage;
-  onMessage(message: ServerMessage): void;
-  onStateChange(state: ConnectionState): void;
-  /** The session is over and will not reconnect. */
-  onEnded(reason: EndReason): void;
 }
 
 const BACKOFF_MS = [500, 1_000, 2_000, 4_000, 8_000, 10_000];
 /** Give up if the very first connection keeps failing (e.g. a wrong address). */
 const MAX_INITIAL_FAILURES = 5;
 
-export class Connection {
+export class Connection implements Backend {
   private readonly options: ConnectionOptions;
   private ws: WebSocket | undefined;
   private ready = false;
@@ -121,15 +125,15 @@ export class Connection {
     this.ready = false;
     if (this.stopped) return;
     if (code === CLOSE_SESSION_ENDED) {
-      this.end({ message: 'The server ended the session.' });
+      this.end({ message: 'The computer ended the conversation.' });
       return;
     }
     this.failures += 1;
     if (!this.everReady && this.failures >= MAX_INITIAL_FAILURES) {
       this.end({
         message:
-          `Could not reach the server at ${this.options.serverLabel}. Check the address under Advanced, ` +
-          'that the server is running, and that this phone is on the same network.',
+          `Couldn’t reach the computer at ${this.options.serverLabel}. Check that it is on, ` +
+          'and that this phone is on the same Wi-Fi.',
         code: 'unreachable',
       });
       return;

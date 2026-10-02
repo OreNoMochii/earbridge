@@ -67,7 +67,7 @@ class ConversationService : Service() {
     } else {
       registerReceiver(receiver, filter)
     }
-    session = MediaSession(this, "EarBridge").apply {
+    session = MediaSession(this, "Alo").apply {
       setCallback(object : MediaSession.Callback() {
         override fun onPlay() {
           onCommand?.invoke("unmute")
@@ -83,7 +83,7 @@ class ConversationService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    val title = intent?.getStringExtra(EXTRA_TITLE) ?: "EarBridge"
+    val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Alo"
     val text = intent?.getStringExtra(EXTRA_TEXT) ?: ""
     val muted = intent?.getBooleanExtra(EXTRA_MUTED, false) ?: false
     try {
@@ -141,7 +141,7 @@ class ConversationService : Service() {
       if (manager.getNotificationChannel(CHANNEL_ID) == null) {
         manager.createNotificationChannel(
           NotificationChannel(CHANNEL_ID, "Conversation", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Shown while EarBridge is translating"
+            description = "Shown while Alo is translating"
             setShowBadge(false)
           },
         )
@@ -163,14 +163,14 @@ class ConversationService : Service() {
     return builder
       .setSmallIcon(icon)
       .setContentTitle(title)
-      .setContentText(if (muted) "Muted · $text" else text)
+      .setContentText(if (muted) "Paused · $text" else text)
       .setOngoing(true)
       .setOnlyAlertOnce(true)
       .setShowWhen(false)
       .setCategory(Notification.CATEGORY_SERVICE)
       .setVisibility(Notification.VISIBILITY_PUBLIC)
       .addAction(
-        if (muted) action(icon, "Unmute", ACTION_UNMUTE, 1) else action(icon, "Mute", ACTION_MUTE, 1),
+        if (muted) action(icon, "Resume", ACTION_UNMUTE, 1) else action(icon, "Pause", ACTION_MUTE, 1),
       )
       .addAction(action(icon, "End", ACTION_END, 2))
       .build()

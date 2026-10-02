@@ -3,7 +3,7 @@ import type { Stats } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
-import type { Logger } from './log.ts';
+import type { Logger } from '../../shared/pipeline/log.ts';
 
 // Serves the built web app (client/dist). During development Vite serves it instead.
 

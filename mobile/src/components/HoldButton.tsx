@@ -1,9 +1,12 @@
-import { Text, View } from 'react-native';
+// A big button to hold while talking.
 
-import { RADIUS, themedStyles } from '../theme.ts';
+import { Text, useWindowDimensions, View } from 'react-native';
+
+import { RADIUS_LG, themedStyles, type } from '../theme.ts';
+import { Icon } from './Icon.tsx';
 
 interface HoldButtonProps {
-  label: string;
+  /** Whose button it is, e.g. "Me · English". */
   detail: string;
   /** Held down, as the conversation sees it. */
   pressed: boolean;
@@ -14,13 +17,15 @@ interface HoldButtonProps {
  * On while a finger is on it, even if it slides off. With a screen reader, a double tap
  * turns it on and another turns it off.
  */
-export function HoldButton({ label, detail, pressed, onChange }: HoldButtonProps) {
-  const { styles } = useStyles();
+export function HoldButton({ detail, pressed, onChange }: HoldButtonProps) {
+  const { styles, palette } = useStyles();
+  const short = useWindowDimensions().height < 700;
+  const color = pressed ? palette.live : palette.text;
   return (
     <View
       accessible
       accessibilityRole="button"
-      accessibilityLabel={`${label}, ${detail}`}
+      accessibilityLabel={detail}
       accessibilityHint="Hold while you talk"
       accessibilityState={{ selected: pressed }}
       accessibilityActions={[{ name: 'activate' }]}
@@ -32,10 +37,11 @@ export function HoldButton({ label, detail, pressed, onChange }: HoldButtonProps
       onResponderGrant={() => onChange(true)}
       onResponderRelease={() => onChange(false)}
       onResponderTerminate={() => onChange(false)}
-      style={[styles.hold, pressed && styles.holdPressed]}
+      style={[styles.hold, short && styles.holdShort, pressed && styles.holdPressed]}
     >
-      <Text style={[styles.label, pressed && styles.textPressed]}>{label}</Text>
-      <Text style={[styles.detail, pressed && styles.textPressed]} numberOfLines={1}>
+      <Icon name="mic" size={short ? 32 : 40} color={pressed ? palette.live : palette.accent} />
+      <Text style={[styles.label, { color }]}>{pressed ? 'Listening…' : 'Hold while you talk'}</Text>
+      <Text style={styles.detail} numberOfLines={1}>
         {detail}
       </Text>
     </View>
@@ -45,31 +51,35 @@ export function HoldButton({ label, detail, pressed, onChange }: HoldButtonProps
 const useStyles = themedStyles((palette) => ({
   hold: {
     flex: 1,
-    minHeight: 88,
-    padding: 8,
+    minHeight: 140,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
     borderWidth: 2,
-    borderColor: palette.accent,
-    borderRadius: RADIUS,
+    borderColor: palette.borderStrong,
+    borderRadius: RADIUS_LG,
     backgroundColor: palette.surface,
   },
+  holdShort: {
+    minHeight: 112,
+    gap: 4,
+  },
   holdPressed: {
-    backgroundColor: palette.accent,
-    transform: [{ scale: 0.98 }],
+    paddingVertical: 7,
+    paddingHorizontal: 9,
+    borderWidth: 3,
+    borderColor: palette.live,
+    backgroundColor: palette.liveSoft,
   },
   label: {
-    color: palette.text,
-    fontSize: 19,
-    fontWeight: '700',
+    ...type.button,
+    textAlign: 'center',
   },
   detail: {
-    color: palette.text,
-    fontSize: 14,
-    opacity: 0.8,
-  },
-  textPressed: {
-    color: palette.accentContrast,
+    ...type.secondary,
+    color: palette.muted,
+    textAlign: 'center',
   },
 }));

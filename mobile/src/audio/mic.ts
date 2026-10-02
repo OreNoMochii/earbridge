@@ -1,5 +1,5 @@
 // The microphone: 16 kHz mono 16-bit sound for the speech recognizer, in 100 ms chunks.
-// Android records with EarBridge's own module, which can use Bluetooth earphones'
+// Android records with the app's own module, which can use Bluetooth earphones'
 // microphones and keeps listening while the phone is locked; iPhone uses the audio
 // library's recorder.
 
@@ -25,8 +25,6 @@ export type MicMode = 'live' | 'silent' | 'off';
 export interface MicrophoneOptions {
   /** Listen through the earphones' microphone when they have one. */
   earphoneMic: boolean;
-  /** Android test builds: a raw recording to play instead of the microphone. */
-  testInputPath?: string | undefined;
   /** 16 kHz mono PCM16. */
   onAudio(pcm: ArrayBuffer): void;
   /** Input level 0..1, ten times a second, whatever the mode. */
@@ -35,8 +33,22 @@ export interface MicrophoneOptions {
   onEnded(message: string): void;
 }
 
+/**
+ * Android test builds play this raw recording (in the app's files folder) wherever the
+ * microphone would be used.
+ */
+const TEST_AUDIO = process.env.EXPO_PUBLIC_TEST_AUDIO || undefined;
+
 /** A problem worth showing as is. */
-export class MicrophoneError extends Error {}
+export class MicrophoneError extends Error {
+  /** The phone does not let the app use the microphone: the way out is the phone's settings. */
+  readonly notAllowed: boolean;
+
+  constructor(message: string, notAllowed = false) {
+    super(message);
+    this.notAllowed = notAllowed;
+  }
+}
 
 export interface Microphone {
   mode: MicMode;
@@ -45,20 +57,19 @@ export interface Microphone {
   stop(): void;
 }
 
-const NOT_ALLOWED_ANDROID =
-  'EarBridge may not use the microphone. Allow it in the phone’s Settings › Apps › EarBridge › Permissions.';
-const NOT_ALLOWED_IOS = 'EarBridge may not use the microphone. Allow it in Settings › EarBridge.';
+const NOT_ALLOWED_ANDROID = 'Alo isn’t allowed to use the microphone. Allow it in Settings › Apps › Alo › Permissions.';
+const NOT_ALLOWED_IOS = 'Alo isn’t allowed to use the microphone. Allow it in Settings › Alo.';
 
 export async function openMicrophone(options: MicrophoneOptions): Promise<Microphone> {
   if (EarbridgeAudio) {
     const status = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-    if (status !== PermissionsAndroid.RESULTS.GRANTED) throw new MicrophoneError(NOT_ALLOWED_ANDROID);
+    if (status !== PermissionsAndroid.RESULTS.GRANTED) throw new MicrophoneError(NOT_ALLOWED_ANDROID, true);
     const mic = new AndroidMicrophone(EarbridgeAudio, options);
     await mic.start();
     return mic;
   }
   if (Platform.OS === 'ios') {
-    if ((await AudioManager.requestRecordingPermissions()) !== 'Granted') throw new MicrophoneError(NOT_ALLOWED_IOS);
+    if ((await AudioManager.requestRecordingPermissions()) !== 'Granted') throw new MicrophoneError(NOT_ALLOWED_IOS, true);
     const mic = new IosMicrophone(options);
     await mic.start();
     return mic;
@@ -91,7 +102,7 @@ class AndroidMicrophone implements Microphone {
     try {
       this.input = await this.module.startCapture({
         earphoneMic: this.options.earphoneMic,
-        testInputPath: this.options.testInputPath,
+        testInputPath: TEST_AUDIO,
       });
     } catch (error) {
       this.release();

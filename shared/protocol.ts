@@ -29,6 +29,11 @@ export interface HelloSolo {
    * phone's own voice. The server answers with the ones it can do in `ready`.
    */
   voiceLangs?: string[];
+  /**
+   * Skip speech much quieter than the two people at the phone usually sound: others
+   * further away, or a radio.
+   */
+  nearbyOnly?: boolean;
   token?: string;
 }
 
@@ -52,7 +57,9 @@ export type ClientMessage =
   | HelloRoom
   | { type: 'speaker'; speaker: SpeakerSelection }
   /** End of a turn (e.g. push-to-talk released): translate what was heard so far. */
-  | { type: 'flush' };
+  | { type: 'flush' }
+  /** solo: translate something that was `skipped` after all (one of the latest SKIPPED_KEPT). */
+  | { type: 'accept'; id: string };
 
 export interface Participant {
   id: string;
@@ -63,6 +70,18 @@ export interface Participant {
 /** In solo mode, speakerId is one of these; in room mode it is a participant id. */
 export const SOLO_ME = 'me';
 export const SOLO_THEM = 'them';
+
+/** solo: how many of the latest `skipped` utterances the server keeps, for `accept`. */
+export const SKIPPED_KEPT = 20;
+
+/** Why something heard in a one-phone conversation was not translated. */
+export type SkipReason =
+  /** It was mostly in another language than the conversation's two. */
+  | 'language'
+  /** Much quieter than the two people at the phone: someone further away, or a radio. */
+  | 'distant'
+  /** Neither of the two voices of the conversation. */
+  | 'voice';
 
 export type ServerMessage =
   | {
@@ -87,6 +106,18 @@ export type ServerMessage =
       speakerName: string;
       lang: string;
       text: string;
+    }
+  /**
+   * solo: something heard that seems to come from someone else, so it is not translated
+   * unless the phone sends `accept` with its id. `lang` is the language it seemed to be in.
+   */
+  | {
+      type: 'skipped';
+      id: string;
+      speakerId: string;
+      lang: string;
+      text: string;
+      reason: SkipReason;
     }
   /** Translation of an utterance; `text` is cumulative, sent repeatedly while streaming. */
   | {

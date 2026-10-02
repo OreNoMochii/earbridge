@@ -216,7 +216,7 @@ class EarbridgeAudioModule : Module() {
     if (record.state != AudioRecord.STATE_INITIALIZED) {
       record.release()
       restoreRouting()
-      throw CaptureException("Could not open the microphone. Check that EarBridge is allowed to use it.")
+      throw CaptureException("Could not open the microphone. Check that Alo is allowed to use it.")
     }
     preferred?.let { record.setPreferredDevice(it) }
     try {

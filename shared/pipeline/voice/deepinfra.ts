@@ -1,5 +1,5 @@
-import { splitForSpeech } from '../../../shared/speech-text.ts';
-import { DEEPINFRA_URL, errorCause } from '../deepinfra.ts';
+import { splitForSpeech } from '../../speech-text.ts';
+import { DEEPINFRA_URL, errorCause, withHint } from '../deepinfra.ts';
 import { SpeechError } from './types.ts';
 import type { SpeechRequest, SpeechSynthesizer } from './types.ts';
 
@@ -80,6 +80,8 @@ export interface DeepInfraSpeechOptions {
   baseUrl?: string;
   /** Past this, the phone's own voice reads the translation instead. */
   timeoutMs?: number;
+  /** Where to fix a rejected key, e.g. "Check DEEPINFRA_API_KEY on the server." */
+  keyHint?: string;
 }
 
 /** Natural voices from text-to-speech models hosted on DeepInfra. */
@@ -94,7 +96,7 @@ export class DeepInfraSpeech implements SpeechSynthesizer {
     return VOICES.has(lang);
   }
 
-  async synthesize(request: SpeechRequest): Promise<Buffer[]> {
+  async synthesize(request: SpeechRequest): Promise<string[]> {
     const voice = VOICES.get(request.lang);
     if (!voice) throw new SpeechError(`There is no natural voice for ${request.lang}.`);
     const text = request.lang.startsWith('zh-') ? withAsciiPunctuation(request.text) : request.text;
@@ -124,7 +126,7 @@ export class DeepInfraSpeech implements SpeechSynthesizer {
     }
   }
 
-  private async request(voice: Voice, text: string, signal: AbortSignal): Promise<Buffer> {
+  private async request(voice: Voice, text: string, signal: AbortSignal): Promise<string> {
     const response = await fetch(`${this.options.baseUrl ?? DEEPINFRA_URL}/v1/inference/${voice.model}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json' },
@@ -141,8 +143,8 @@ export class DeepInfraSpeech implements SpeechSynthesizer {
       throw new SpeechError('The voice service sent an unreadable reply.', { cause: error });
     }
     // The audio comes as a data URL: data:audio/mp3;base64,...
-    const audio = typeof body.audio === 'string' ? Buffer.from(body.audio.replace(/^data:[^,]*,/, ''), 'base64') : undefined;
-    if (!audio?.length) throw new SpeechError('The voice returned no audio.');
+    const audio = typeof body.audio === 'string' ? body.audio.replace(/^data:[^,]*,/, '') : undefined;
+    if (!audio) throw new SpeechError('The voice returned no audio.');
     return audio;
   }
 
@@ -150,7 +152,7 @@ export class DeepInfraSpeech implements SpeechSynthesizer {
     const { status } = response;
     let message = `The voice failed (HTTP ${status}).`;
     if (status === 401 || status === 403) {
-      message = 'DeepInfra rejected the API key. Check DEEPINFRA_API_KEY on the server.';
+      message = withHint('DeepInfra rejected the API key.', this.options.keyHint);
     } else if (status === 402) {
       message = 'DeepInfra wants payment (HTTP 402). Check the balance of the DeepInfra account.';
     } else if (status === 429) {

@@ -1,4 +1,4 @@
-import { DEEPINFRA_URL, errorCause, errorDetail } from '../deepinfra.ts';
+import { DEEPINFRA_URL, errorCause, errorDetail, withHint } from '../deepinfra.ts';
 import { SYSTEM_PROMPT, buildUserPrompt } from './prompt.ts';
 import { TranslationError, TranslationRefusedError } from './types.ts';
 import type { TranslationRequest, Translator } from './types.ts';
@@ -10,6 +10,10 @@ export interface DeepInfraTranslatorOptions {
   baseUrl?: string;
   /** A translation that takes longer than this is no use in a live conversation. */
   timeoutMs?: number;
+  /** Where to fix a rejected key, e.g. "Check DEEPINFRA_API_KEY on the server." */
+  keyHint?: string;
+  /** Where to change the model, e.g. "Check TRANSLATION_MODEL on the server." */
+  modelHint?: string;
 }
 
 interface ChatChunk {
@@ -84,11 +88,11 @@ export class DeepInfraTranslator implements Translator {
     const { status } = response;
     let message = `Translation failed (HTTP ${status}).`;
     if (status === 401 || status === 403) {
-      message = 'DeepInfra rejected the API key. Check DEEPINFRA_API_KEY on the server.';
+      message = withHint('DeepInfra rejected the API key.', this.options.keyHint);
     } else if (status === 402) {
       message = 'DeepInfra wants payment (HTTP 402). Check the balance of the DeepInfra account.';
     } else if (status === 404) {
-      message = `Translation model "${this.options.model}" is not available on DeepInfra. Check TRANSLATION_MODEL on the server.`;
+      message = withHint(`Translation model "${this.options.model}" is not available on DeepInfra.`, this.options.modelHint);
     } else if (status === 429) {
       message = 'Translation rate limit reached, or the model is busy. Try again in a moment.';
     }
@@ -99,16 +103,23 @@ export class DeepInfraTranslator implements Translator {
 
 /** The data line of each server-sent event in a streamed response body. */
 async function* eventData(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  // A reader, because streams are not async iterable in React Native.
+  const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  for await (const chunk of body) {
-    buffer += decoder.decode(chunk, { stream: true });
-    let end: number;
-    while ((end = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, end);
-      buffer = buffer.slice(end + 1);
-      if (line.startsWith('data:')) yield line.slice(5).trim();
+  try {
+    for (let read = await reader.read(); !read.done; read = await reader.read()) {
+      buffer += decoder.decode(read.value, { stream: true });
+      let end: number;
+      while ((end = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        if (line.startsWith('data:')) yield line.slice(5).trim();
+      }
     }
+  } finally {
+    // Stops the download when the caller stops reading early, at [DONE] or an error.
+    reader.cancel().catch(() => {});
   }
   buffer += decoder.decode();
   if (buffer.startsWith('data:')) yield buffer.slice(5).trim();

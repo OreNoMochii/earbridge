@@ -1,5 +1,5 @@
-// The EarBridge server the app talks to, as the user typed it: "192.168.1.20:8787",
-// "http://my-mac.local:8787" or "https://earbridge.example.com". React Native's URL class
+// The computer running Alo's server, as the user typed it: "192.168.1.20:8787",
+// "http://my-mac.local:8787" or "https://alo.example.com". React Native's URL class
 // cannot read the parts of an address, so this uses a pattern.
 
 const ADDRESS = /^(https?|wss?):\/\/([^/?#\s]+)(\/[^?#\s]*)?(?:[?#]\S*)?$/i;

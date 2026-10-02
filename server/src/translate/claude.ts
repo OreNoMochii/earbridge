@@ -8,9 +8,9 @@ import {
   RateLimitError,
 } from '@anthropic-ai/sdk';
 import type Anthropic from '@anthropic-ai/sdk';
-import { SYSTEM_PROMPT, buildUserPrompt } from './prompt.ts';
-import { TranslationError, TranslationRefusedError } from './types.ts';
-import type { TranslationRequest, Translator } from './types.ts';
+import { SYSTEM_PROMPT, buildUserPrompt } from '../../../shared/pipeline/translate/prompt.ts';
+import { TranslationError, TranslationRefusedError } from '../../../shared/pipeline/translate/types.ts';
+import type { TranslationRequest, Translator } from '../../../shared/pipeline/translate/types.ts';
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Effort = (typeof EFFORTS)[number];

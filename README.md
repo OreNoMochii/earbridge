@@ -8,6 +8,9 @@ language model on DeepInfra translates it, and a natural-sounding voice, also fr
 into your ears. The earphones need nothing special, because the app uses whatever microphone and audio output the
 phone is already using.
 
+The phone app also works without a server: with your own API keys, or entirely on the phone, offline, on Android 13
+and later. See [Who translates](#who-translates).
+
 ## How it works
 
 ```
@@ -27,8 +30,11 @@ phone is already using.
 4. A text-to-speech model on DeepInfra reads the finished translation in the listener's language, and the phone plays
    the audio. The sound goes wherever the phone is playing sound, which is your earphones.
 
-The API keys stay on the relay server. The browser and the phone app never see them. Anthropic's Claude can translate
-instead of DeepInfra; see [Configuration](#configuration).
+The relay server's API keys stay on the server. The browser and the phone app never see them. Anthropic's Claude can
+translate instead of DeepInfra; see [Configuration](#configuration).
+
+The phone app can skip the relay in One phone mode. With **My own API keys**, it calls Deepgram and DeepInfra itself,
+with keys you type into it. With **On this phone**, the phone does all three steps.
 
 ## Two ways to use it
 
@@ -40,8 +46,8 @@ This mode is for two people sharing one phone. You wear the earphones, and the o
 - **What they see:** what you say, translated, on the screen. **Flip ↻** turns that text around for someone sitting
   across from you. If you choose **On the phone speaker** instead, the phone reads both translations aloud.
 - **Who is speaking:** detected automatically when both languages are among English, Spanish, French, German, Hindi,
-  Russian, Portuguese, Japanese, Italian and Dutch. This uses Deepgram's multilingual mode. For other pairs, tap
-  **Me** or **Them** to show who is talking.
+  Russian, Portuguese, Japanese, Italian and Dutch. This uses Deepgram's multilingual mode. For other pairs, and in
+  the phone app's **On this phone** mode, tap **Me** or **Them** to show who is talking.
 
 ### Room
 
@@ -128,8 +134,10 @@ same Wi-Fi.
 ## The phone app
 
 The [`mobile/`](mobile) folder holds a phone app for Android and iPhone, built with Expo. It has the same screens and
-settings as the web app, and it uses the same relay server. Like the web app, it contains no API keys. What it adds:
+settings as the web app. What it adds:
 
+- **It can work without a server.** In One phone mode, it can use your own API keys, or translate on the phone
+  itself. See [Who translates](#who-translates).
 - **It keeps translating with the screen off.** On Android, a notification shows during a conversation, with **Mute**
   and **End** buttons. The play/pause button on the earphones mutes and unmutes too.
 - **It needs no HTTPS,** so it can use the relay server on your computer as it is, with no certificate warning.
@@ -138,23 +146,49 @@ settings as the web app, and it uses the same relay server. Like the web app, it
 - **Invites open the app.** In a room, tap **Invite** to show a QR code and a link. They open EarBridge with the room
   and the server filled in. If the server uses HTTPS, the invite is a web link instead, which works in a browser too.
 
-So far, the app has been built and tested for Android only, in the emulator. See [Limitations](#limitations). Could
-the phone do everything itself, with no server? [docs/on-device.md](docs/on-device.md) looks into it.
+So far, the app has been built and tested for Android only, in the emulator. See [Limitations](#limitations).
+
+### Who translates
+
+With one phone, the start screen's **Translation** card offers three choices. A room always uses an EarBridge server,
+because the phones have to reach each other.
+
+|                 | On this phone | My own API keys | EarBridge server |
+|-----------------|---------------|-----------------|------------------|
+| Speech to text  | Android's on-device speech recognition | Deepgram | Deepgram, through the server |
+| Translation     | Google ML Kit, on the phone | A language model on DeepInfra | A language model on DeepInfra, or Claude |
+| Voice           | The phone's own | Natural voices from DeepInfra, or the phone's own | Natural voices from DeepInfra, or the phone's own |
+| Who is speaking | Tap **Me** or **Them** | Detected automatically for many pairs | Detected automatically for many pairs |
+| You need        | Android 13 or later, and the internet once per language | A Deepgram key and a DeepInfra key | A computer running the server |
+| Cost            | Free | Deepgram and DeepInfra bill you for what you use | Whoever runs the server pays |
+| Offline         | Yes, once the languages are downloaded | No | No |
+| Quality         | Lower: see [Limitations](#limitations) | Best | Best |
+
+The [research behind **On this phone**](docs/on-device.md) compares other ways to run everything on the phone.
 
 ### Using it on Android
 
-1. Start the server on your computer with `npm run dev` or `npm start`. It prints the address for the app, for
-   example `Server address for the EarBridge phone app: 192.168.1.20:8787`. If the computer asks whether Node may
-   accept incoming connections, allow it.
-2. Install the app on the phone. [Build it](#building-it-for-android), then either:
+1. Install the app on the phone. [Build it](#building-it-for-android), then either:
    - connect the phone with USB debugging turned on, and run `adb install app-release.apk`; or
    - copy the file to the phone and open it there. Android asks you to allow apps from that source, and Google Play
      Protect may show a warning first.
-3. Open EarBridge. The first time, **Advanced** is already open: enter the address under **Server**. The phone must be
-   on the same Wi-Fi as the computer.
-4. If the server has an `ACCESS_TOKEN`, enter it under **Advanced → Access code**.
-5. Pick your languages and tap **Start**. Allow the microphone. Allow notifications too, so you can mute or end the
-   conversation from the lock screen.
+2. Open EarBridge and pick your languages. Under **Translation**, choose who translates:
+   - **On this phone:** there is nothing to enter.
+   - **My own API keys:** enter a [Deepgram](https://console.deepgram.com) key and a
+     [DeepInfra](https://deepinfra.com/dash/api_keys) key.
+   - **EarBridge server:** start the server on your computer with `npm run dev` or `npm start`. It prints the address
+     for the app, for example `Server address for the EarBridge phone app: 192.168.1.20:8787`. Enter it under
+     **Server address**; the phone must be on the same Wi-Fi as the computer. If the computer asks whether Node may
+     accept incoming connections, allow it. If the server has an `ACCESS_TOKEN`, enter it under **Access code**.
+3. Tap **Start**. Allow the microphone. Allow notifications too, so you can mute or end the conversation from the lock
+   screen.
+
+The first time you use a language **On this phone**, the phone needs the internet. Android may ask whether to
+download speech recognition for it (49 MB for Spanish in our test): tap **Download**. The app then downloads the
+translation, about 30 MB per language. The status line shows the progress, then **Listening**. After that, it works
+offline.
+
+For a room, choose **Room** at the top, and fill in the server as above.
 
 ### Building it for Android
 
@@ -176,6 +210,9 @@ To build the server's address into the app, so that nobody has to type it, set `
 Gradle: `EXPO_PUBLIC_SERVER_URL=http://192.168.1.20:8787 ./gradlew assembleRelease`. If you change it later, delete
 `mobile/android/app/build` first, or Gradle keeps the old address.
 
+Don't build API keys into the app: anyone who has the app could read them. Each person types their own under **My
+own API keys**.
+
 ### iPhone
 
 The app is set up for iPhone too, but it hasn't been built or tested on one yet. Building it needs a Mac with Xcode,
@@ -187,10 +224,12 @@ npm install
 npx expo run:ios --device --configuration Release
 ```
 
-When the app first connects, allow it to use the local network. With a free Apple account, the app stops opening
-after 7 days, until you install it again. To hand it out through TestFlight or the App Store, you need the Apple
-Developer Program, which costs $99 a year. With that membership, [EAS Build](https://docs.expo.dev/build/introduction/)
-can also build the app in the cloud, without a Mac.
+**On this phone** isn't available on iPhone yet: choose **My own API keys** or **EarBridge server**. When the app
+first connects to a server on your Wi-Fi, allow it to use the local network.
+
+With a free Apple account, the app stops opening after 7 days, until you install it again. To hand it out through
+TestFlight or the App Store, you need the Apple Developer Program, which costs $99 a year. With that membership,
+[EAS Build](https://docs.expo.dev/build/introduction/) can also build the app in the cloud, without a Mac.
 
 ## Deploying
 
@@ -207,7 +246,8 @@ conversations and the access code private. Do one of the following:
   `/ws`. If the proxy changes the Host header, add your public address to `ALLOWED_ORIGINS`.
 
 Set `ACCESS_TOKEN` on any server that can be reached from the internet. Without it, anyone who finds the server can
-spend your API credits. People enter the code under **Advanced → Access code**.
+spend your API credits. People enter the code under **Access code**: in the web app, it is under **Advanced**; in the
+phone app, below the server address.
 
 Rooms are kept in memory. That means one server process only, and a restart ends every room. A room with nobody in it
 stays open for 10 minutes, so people can rejoin.
@@ -250,6 +290,9 @@ DeepInfra if `DEEPINFRA_API_KEY` is set.
 The app offers 34 languages, from English, Spanish, Chinese and Arabic to Catalan and Slovak. The full list is in
 [`shared/languages.ts`](shared/languages.ts). Recognition quality depends on the language and on the Deepgram model.
 
+**On this phone** translates all 34, but which languages it can recognize depends on the phone. The app says when the
+phone can't recognize one.
+
 ## Limitations
 
 - **Bluetooth microphones lower the sound quality** while they are in use. See [Which microphone?](#which-microphone).
@@ -264,7 +307,15 @@ The app offers 34 languages, from English, Spanish, Chinese and Arabic to Catala
   may also play speech through the earpiece instead of the loudspeaker while the microphone is on, or play it more
   quietly.
 - **The phone app has been tested only in the Android emulator.** Real Bluetooth earphones, their microphones and
-  buttons, and long conversations with the screen off still need testing on real phones.
+  buttons, and long conversations with the screen off still need testing on real phones. So does **On this phone**,
+  which relies on each phone's own speech recognition.
+- **On this phone is less accurate.** Android's speech recognition makes more mistakes than Deepgram: in our French
+  test, "près d'ici" ("near here") came out as "préjudice". ML Kit translates each sentence on its own, without the
+  conversation around it, and Google describes it as "intended for casual and simple translations". Chinese comes out
+  in simplified characters.
+- **On this phone downloads each language once:** its speech recognition (49 MB for Spanish and 57 MB for French, in
+  our tests) and its translation (about 30 MB). Android sometimes finishes a download in its own time. The app waits up
+  to 3 minutes, then asks you to try again later.
 - **Natural voices aren't perfect.** They come from small, fast models. They sometimes mispronounce a word or read a
   time such as "8:00" oddly. The Chatterbox voices (German, Russian, Korean and the rest of its list) can sound
   accented, and now and then slur a word.
@@ -277,21 +328,28 @@ The app offers 34 languages, from English, Spanish, Chinese and Arabic to Catala
 
 ## Privacy
 
-- **Where audio goes:** from the phone to your relay server, then to Deepgram for speech recognition.
+- **Where audio goes:** from the phone to your relay server, then to Deepgram for speech recognition. With **My own
+  API keys**, it goes straight from the phone to Deepgram. **On this phone**, it stays on the phone.
 - **Where text goes:** the recognized text goes to DeepInfra for translation, along with the last ten lines of the
   conversation as context. Translations then go to DeepInfra again to be read aloud, unless you choose the phone's
-  own voice. With `TRANSLATION_PROVIDER=claude`, translation goes to Anthropic instead.
+  own voice. With `TRANSLATION_PROVIDER=claude` on the server, translation goes to Anthropic instead. **On this
+  phone**, the phone translates, and Google's translation component (ML Kit) sends Google only usage statistics, such
+  as which languages are used.
 - **Provider policies:** Deepgram's and DeepInfra's data policies (and Anthropic's, with Claude) apply to what they
   receive.
 - **What the server keeps:** nothing is stored. There are no recordings, transcripts or accounts. Conversations and
   rooms exist in memory only while they are active, and the logs never contain what people say.
 - **What the phone keeps:** your settings. These are your languages, mode, name, microphone, voice and access code.
-  The web app keeps them in the browser's local storage. The phone app keeps them, with the server's address, in a
-  file in its own storage.
+  The web app keeps them in the browser's local storage. The phone app keeps them, with the server's address and who
+  translates, in a file in its own storage. Your own API keys are kept apart from them and encrypted, using Android's
+  keystore or the iPhone's keychain. They are left out of backups, and don't move to a new phone. **On this phone**
+  also keeps the languages it downloaded.
 
 ## Security
 
-- **API keys:** they never leave the server. Neither the web app nor the phone app contains them.
+- **API keys:** the server's keys never leave it, and neither the web app nor the phone app contains any. With **My
+  own API keys**, each person types their own into the phone app, which stores them encrypted and sends them only to
+  Deepgram and DeepInfra.
 - **`ACCESS_TOKEN`:** keeps strangers from using your server. It is compared in constant time.
 - **WebSocket origin check:** in a browser, only pages served from the server's own address or from `ALLOWED_ORIGINS`
   can open the WebSocket. Other websites cannot use your server through their visitors' browsers. Apps that aren't
@@ -304,31 +362,36 @@ The app offers 34 languages, from English, Spanish, Chinese and Arabic to Catala
 
 ```
 server/src/
-  index.ts          entry point: reads the configuration and starts the server
-  app.ts            HTTP(S) server, static files, WebSocket upgrades, Origin and access checks
-  session.ts        one phone's connection: hello, audio, messages
-  solo.ts           one-phone conversations: who is speaking, Me / Them
-  rooms.ts          rooms: codes, participants, one translation per language
-  stt/              speech-to-text: the SttProvider interface, Deepgram, sentence segmentation
-  translate/        the Translator interface, the DeepInfra and Claude translators, and the prompt
-  voice/            the SpeechSynthesizer interface and DeepInfra's natural voices
-  deepinfra.ts      what the DeepInfra translator and voices share
+  index.ts             entry point: reads the configuration and starts the server
+  app.ts               HTTP(S) server, static files, WebSocket upgrades, Origin and access checks
+  session.ts           one phone's connection: hello, audio, messages
+  rooms.ts             rooms: codes, participants, one translation per language
+  deepgram-socket.ts   opens Deepgram's streaming connection
+  translate/claude.ts  the Claude translator
 client/src/
-  setup-view.ts     start screen
-  live-view.ts      conversation screen
-  live-session.ts   connects the microphone, the server and the spoken translations
-  connection.ts     WebSocket that reconnects on its own
-  audio/            microphone capture, resampling to 16 kHz
-  voice-player.ts   plays the natural voices
-  speech-queue.ts   reads translations one at a time, in the order they were said
-  tts.ts            text-to-speech with the phone's voices
-client/public/      audio worklet, web app manifest, icon
-shared/             protocol, languages, room codes (used by both sides)
-mobile/             the phone app (Expo); it reuses code from client/src/ and shared/
-  App.tsx           setup screen, then a conversation
-  src/              screens, settings, the conversation, microphone and voices
-  modules/          Android audio: microphone, earphones, and the notification that keeps it running
-docs/on-device.md   research: speech recognition and translation on the phone itself
+  setup-view.ts        start screen
+  live-view.ts         conversation screen
+  live-session.ts      connects the microphone, the server and the spoken translations
+  connection.ts        WebSocket that reconnects on its own
+  audio/               microphone capture, resampling to 16 kHz
+  voice-player.ts      plays the natural voices
+  speech-queue.ts      reads translations one at a time, in the order they were said
+  tts.ts               text-to-speech with the phone's voices
+client/public/         audio worklet, web app manifest, icon
+shared/                protocol, languages, room codes (used by the server and both apps)
+  pipeline/            the conversation itself, used by the server and the phone app:
+    solo.ts            one-phone conversations: who is speaking, Me / Them
+    stt/               speech-to-text: the SttProvider interface, Deepgram, on-device, sentence segmentation
+    translate/         the Translator interface, the DeepInfra translator, and the prompt
+    voice/             the SpeechSynthesizer interface and DeepInfra's natural voices
+    deepinfra.ts       what the DeepInfra translator and voices share
+mobile/                the phone app (Expo); it reuses code from client/src/ and shared/
+  App.tsx              setup screen, then a conversation
+  src/                 screens, settings, the conversation, microphone and voices
+  src/engines/         who translates: an EarBridge server, your own API keys, or the phone itself
+  modules/             Android: microphone, earphones, the notification that keeps it running, and
+                       on-device speech recognition and translation
+docs/on-device.md      research: speech recognition and translation on the phone itself
 server/test/, client/test/
 ```
 
@@ -354,17 +417,19 @@ For the phone app, run these in `mobile/`:
 | `npx expo lint`        | Lints the phone app. |
 
 The phone app imports the settings, speech queue, resampler, protocol and language list from `client/src/` and
-`shared/`, so changes there affect both apps.
+`shared/`, so changes there affect both apps. For **My own API keys** and **On this phone**, it also runs the server's
+conversation, speech recognition, translation and voice code, from `shared/pipeline/`.
 
 ### Another speech recognizer, translator or voice
 
 To use another service, implement one of these interfaces and pass it to `createApp` in `server/src/index.ts`:
 
-- `SttProvider` in [`server/src/stt/types.ts`](server/src/stt/types.ts), for speech recognition;
-- `Translator` in [`server/src/translate/types.ts`](server/src/translate/types.ts), for translation;
-- `SpeechSynthesizer` in [`server/src/voice/types.ts`](server/src/voice/types.ts), for the voices.
+- `SttProvider` in [`shared/pipeline/stt/types.ts`](shared/pipeline/stt/types.ts), for speech recognition;
+- `Translator` in [`shared/pipeline/translate/types.ts`](shared/pipeline/translate/types.ts), for translation;
+- `SpeechSynthesizer` in [`shared/pipeline/voice/types.ts`](shared/pipeline/voice/types.ts), for the voices.
 
-The tests use fake versions of all three, in `server/test/fakes.ts`.
+The phone app puts them together in `mobile/src/engines/keys.ts` and `mobile/src/engines/local.ts`. The tests use
+fake versions of all three, in `server/test/fakes.ts`.
 
 Automatic speaker detection in One phone mode relies on Deepgram's multilingual mode, which tags the language of each
 word. See `AUTO_DETECT_BASES` in `shared/languages.ts`.
@@ -372,8 +437,11 @@ word. See `AUTO_DETECT_BASES` in `shared/languages.ts`.
 ## Roadmap
 
 - Test the phone app on real phones with Bluetooth earphones, and build it for iPhone.
-- An offline mode that recognizes and translates speech on the phone itself. See
+- **On this phone** for iPhone, with Apple's on-device speech recognition and translation. See
   [docs/on-device.md](docs/on-device.md).
+- Open models, such as Whisper and Gemma, on the phone: for the languages and phones that the built-in engines don't
+  cover, and for better translations offline.
+- The phone's own voice played by the app itself, so that a future Android can't mute it while the screen is off.
 - Natural voices for the ten languages that don't have one yet.
 - More speech recognizers, through `SttProvider`.
 - PNG icons for the iOS home screen.

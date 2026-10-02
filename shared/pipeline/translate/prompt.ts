@@ -1,4 +1,4 @@
-import { languageName } from '../../../shared/languages.ts';
+import { languageName } from '../../languages.ts';
 import type { ContextLine, TranslationRequest } from './types.ts';
 
 // Kept identical across requests so it stays cacheable as it grows.

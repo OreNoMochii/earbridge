@@ -4,14 +4,14 @@ import { createServer as createHttpsServer } from 'node:https';
 import type { Duplex } from 'node:stream';
 import WebSocket, { WebSocketServer } from 'ws';
 import type { RawData } from 'ws';
+import type { Logger } from '../../shared/pipeline/log.ts';
+import type { SttProvider } from '../../shared/pipeline/stt/types.ts';
+import type { Translator } from '../../shared/pipeline/translate/types.ts';
+import type { SpeechSynthesizer } from '../../shared/pipeline/voice/types.ts';
 import { CLOSE_SESSION_ENDED } from '../../shared/protocol.ts';
 import { createRequestHandler } from './http.ts';
-import type { Logger } from './log.ts';
 import { RoomRegistry } from './rooms.ts';
 import { ClientSession } from './session.ts';
-import type { SttProvider } from './stt/types.ts';
-import type { Translator } from './translate/types.ts';
-import type { SpeechSynthesizer } from './voice/types.ts';
 
 export interface AppOptions {
   stt: SttProvider;
