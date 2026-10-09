@@ -3,13 +3,18 @@
 // time; this turns its sessions into a stream that can be finalized and closed.
 
 import { languageName } from '../../languages.ts';
-import type { SttEvents, SttProvider, SttStatus, SttStream, SttStreamOptions } from './types.ts';
+import { AUDIO_SAMPLE_RATE } from '../../protocol.ts';
+import type { SttEvents, SttProvider, SttResult, SttStatus, SttStream, SttStreamOptions } from './types.ts';
 
 /** What the recognizer reports for a session. `end` always comes last, after a fatal error too. */
 export type RecognitionEvent =
   | { session: number; type: 'ready' }
-  /** What it is hearing so far in the current sentence, or the sentence once it is done. */
-  | { session: number; type: 'partial' | 'segment'; text: string }
+  /**
+   * What it is hearing so far in the current sentence, or the sentence once it is done.
+   * `start` and `end`: when its words were said, in seconds since the session's first
+   * audio, if the recognizer reports word timings.
+   */
+  | { session: number; type: 'partial' | 'segment'; text: string; start?: number; end?: number }
   /** An Android SpeechRecognizer error code. */
   | { session: number; type: 'error'; code: number; fatal: boolean }
   | { session: number; type: 'end' };
@@ -43,6 +48,8 @@ const ERROR_LANGUAGE_UNAVAILABLE = 13;
 
 /** How long a closing stream waits for its last words. */
 const CLOSE_GRACE_MS = 6_000;
+/** 16-bit mono. */
+const BYTES_PER_SECOND = AUDIO_SAMPLE_RATE * 2;
 
 /** Session ids are unique across streams: they share one recognizer. */
 let lastSession = 0;
@@ -71,9 +78,11 @@ class OnDeviceStream implements SttStream {
   private readonly locale: string;
   private readonly events: SttEvents;
   private readonly unsubscribe: () => void;
-  /** Sessions of this stream the recognizer has not ended yet. */
-  private readonly live = new Set<number>();
+  /** Sessions of this stream the recognizer has not ended yet, and when their audio began. */
+  private readonly live = new Map<number, number>();
   private current = 0;
+  /** Seconds of audio sent: the stream's clock, which word timings are told on. */
+  private sent = 0;
   private status: SttStatus = 'connecting';
   private closing = false;
   private finished = false;
@@ -90,7 +99,9 @@ class OnDeviceStream implements SttStream {
   }
 
   sendAudio(chunk: Uint8Array): void {
-    if (!this.closing) this.recognizer.write(this.current, chunk);
+    if (this.closing) return;
+    this.recognizer.write(this.current, chunk);
+    this.sent += chunk.byteLength / BYTES_PER_SECOND;
   }
 
   finalize(): void {
@@ -111,7 +122,7 @@ class OnDeviceStream implements SttStream {
   private begin(): void {
     const session = ++lastSession;
     this.current = session;
-    this.live.add(session);
+    this.live.set(session, this.sent);
     try {
       this.recognizer.start(session, this.locale);
     } catch (error) {
@@ -128,7 +139,14 @@ class OnDeviceStream implements SttStream {
         break;
       case 'partial':
         this.setStatus('live');
-        this.events.onResult({ text: event.text, isFinal: false, speechFinal: false, fromFinalize: false, wordLanguages: [] });
+        this.events.onResult({
+          text: event.text,
+          isFinal: false,
+          speechFinal: false,
+          fromFinalize: false,
+          wordLanguages: [],
+          ...this.timing(event),
+        });
         break;
       case 'segment':
         this.setStatus('live');
@@ -139,6 +157,7 @@ class OnDeviceStream implements SttStream {
           speechFinal: true,
           fromFinalize: event.session !== this.current,
           wordLanguages: [],
+          ...this.timing(event),
         });
         break;
       case 'error':
@@ -158,6 +177,13 @@ class OnDeviceStream implements SttStream {
         }
         break;
     }
+  }
+
+  /** When the words were said on the stream's clock, if the recognizer said. */
+  private timing(event: { session: number; start?: number; end?: number }): Pick<SttResult, 'start' | 'end'> {
+    const began = this.live.get(event.session);
+    if (began === undefined || event.start === undefined || event.end === undefined) return {};
+    return { start: began + event.start, end: began + event.end };
   }
 
   private setStatus(status: SttStatus): void {
@@ -192,7 +218,7 @@ class OnDeviceStream implements SttStream {
     this.closing = true;
     clearTimeout(this.closeTimer);
     this.unsubscribe();
-    for (const session of this.live) this.recognizer.cancel(session);
+    for (const session of this.live.keys()) this.recognizer.cancel(session);
     this.live.clear();
     this.events.onClosed();
   }

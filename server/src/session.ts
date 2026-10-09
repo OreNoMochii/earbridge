@@ -75,6 +75,15 @@ export class ClientSession {
       case 'accept':
         if (typeof message!['id'] === 'string') this.solo?.accept(message!['id']);
         return;
+      case 'record-voice':
+        this.solo?.recordPartner();
+        return;
+      case 'stop-recording':
+        this.solo?.stopRecording();
+        return;
+      case 'talk-mode':
+        if (message!['mode'] === 'handsfree' || message!['mode'] === 'hold') this.solo?.setTalkMode(message!['mode']);
+        return;
       default:
         this.send({ type: 'error', message: 'Invalid message.', fatal: false });
     }

@@ -1,5 +1,5 @@
-// One phone: the latest translation for the other person, in large type. Turn around
-// shows it upside down, for someone sitting across.
+// One phone: the latest translation for the other person. Turn around shows it upside
+// down, for someone sitting across.
 
 import { useEffect, useRef, useState } from 'react';
 import { Animated, ScrollView, Text, View, useWindowDimensions } from 'react-native';
@@ -27,7 +27,7 @@ export function PartnerPanel({ partner, lang }: { partner: PartnerView; lang: st
   return (
     <Animated.View style={[styles.panel, { maxHeight: height * 0.38, transform: [{ rotate }] }]}>
       <View style={styles.head}>
-        <Text style={styles.for}>For them, in {language}</Text>
+        <Text style={styles.for}>For them · {language}</Text>
         <CompactButton
           label="Turn around"
           icon="refresh-ccw"
@@ -51,11 +51,11 @@ export function PartnerPanel({ partner, lang }: { partner: PartnerView; lang: st
 
 const useStyles = themedStyles((palette) => ({
   panel: {
-    gap: 8,
-    paddingTop: 14,
-    paddingRight: 16,
-    paddingBottom: 20,
-    paddingLeft: 20,
+    gap: 4,
+    paddingTop: 8,
+    paddingRight: 10,
+    paddingBottom: 12,
+    paddingLeft: 16,
     borderWidth: 2,
     borderColor: palette.accent,
     borderRadius: RADIUS_LG,
@@ -76,12 +76,11 @@ const useStyles = themedStyles((palette) => ({
     flexGrow: 0,
   },
   text: {
-    ...type.partner,
+    ...type.body,
     color: palette.text,
   },
   waiting: {
-    ...type.heading,
-    fontWeight: '400',
+    ...type.body,
     color: palette.muted,
   },
 }));

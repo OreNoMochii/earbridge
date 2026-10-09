@@ -14,7 +14,7 @@ import type { IconName } from './Icon.tsx';
 export function Logo({ large = false }: { large?: boolean }) {
   const { styles, palette } = useStyles();
   return (
-    <View style={[styles.logo, large && styles.logoLarge]} accessible accessibilityRole="header" accessibilityLabel="Alo">
+    <View style={styles.logo} accessible accessibilityRole="header" accessibilityLabel="Alo">
       <Icon name="audio-lines" size={large ? 30 : 24} color={palette.onAccent} />
       <Text style={[styles.logoText, large && styles.logoTextLarge]}>Alo</Text>
     </View>
@@ -35,11 +35,12 @@ export function StatusPill({ text, tone }: { text: string; tone: StatusTone }) {
   );
 }
 
-export function SectionTitle({ children, hint }: { children: string; hint?: string | undefined }) {
+/** A section's title, muted when nothing in it can be used. */
+export function SectionTitle({ children, hint, muted = false }: { children: string; hint?: string | undefined; muted?: boolean }) {
   const { styles } = useStyles();
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle} accessibilityRole="header">
+      <Text style={[styles.sectionTitle, muted && styles.mutedTitle]} accessibilityRole="header">
         {children}
       </Text>
       {hint !== undefined && <Text style={styles.muted}>{hint}</Text>}
@@ -52,12 +53,13 @@ export function Divider() {
   return <View style={styles.divider} />;
 }
 
-/** A line of text with an icon before it, e.g. for privacy. */
+/** A line of text with an icon before it, e.g. for privacy. Muted notes have a smaller icon. */
 export function Note({ icon, children, tone = 'plain' }: { icon: IconName; children: ReactNode; tone?: 'plain' | 'muted' }) {
   const { styles, palette } = useStyles();
+  const muted = tone === 'muted';
   return (
-    <View style={styles.note}>
-      <Icon name={icon} size={24} color={tone === 'muted' ? palette.muted : palette.accent} />
+    <View style={[styles.note, muted && styles.noteMuted]}>
+      <Icon name={icon} size={muted ? 22 : 24} color={muted ? palette.muted : palette.accent} />
       <Text style={[styles.noteText, tone === 'muted' && styles.muted]}>{children}</Text>
     </View>
   );
@@ -81,7 +83,7 @@ export function Banner({ icon, title, message, action }: { icon: IconName; title
           <Text style={styles.bannerMessage}>{message}</Text>
         </View>
       </View>
-      {action && <CompactButton label={action.label} icon={action.icon} onPress={action.onPress} />}
+      {action && <CompactButton label={action.label} icon={action.icon} onPress={action.onPress} style={styles.bannerAction} />}
     </View>
   );
 }
@@ -113,25 +115,15 @@ const useStyles = themedStyles((palette) => ({
     borderBottomLeftRadius: 6,
     backgroundColor: palette.accent,
   },
-  logoLarge: {
-    gap: 10,
-    paddingTop: 10,
-    paddingRight: 20,
-    paddingBottom: 10,
-    paddingLeft: 18,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderBottomRightRadius: 24,
-  },
   logoText: {
     ...type.title,
     fontSize: 26,
-    lineHeight: 32,
+    lineHeight: 35,
     color: palette.onAccent,
   },
   logoTextLarge: {
     fontSize: 34,
-    lineHeight: 42,
+    lineHeight: 46,
   },
   pill: {
     alignSelf: 'flex-start',
@@ -155,11 +147,14 @@ const useStyles = themedStyles((palette) => ({
     flexShrink: 1,
   },
   section: {
-    gap: 4,
+    gap: 12,
   },
   sectionTitle: {
     ...type.section,
     color: palette.text,
+  },
+  mutedTitle: {
+    color: palette.muted,
   },
   muted: {
     ...type.secondary,
@@ -174,6 +169,9 @@ const useStyles = themedStyles((palette) => ({
     alignItems: 'flex-start',
     gap: 12,
   },
+  noteMuted: {
+    gap: 10,
+  },
   noteText: {
     ...type.secondary,
     flex: 1,
@@ -181,7 +179,7 @@ const useStyles = themedStyles((palette) => ({
   },
   banner: {
     gap: 14,
-    padding: 16,
+    padding: 14,
     borderWidth: 2,
     borderColor: palette.danger,
     borderRadius: 16,
@@ -195,6 +193,9 @@ const useStyles = themedStyles((palette) => ({
   bannerText: {
     flex: 1,
     gap: 4,
+  },
+  bannerAction: {
+    alignSelf: 'flex-start',
   },
   bannerTitle: {
     ...type.bodyBold,

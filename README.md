@@ -261,7 +261,7 @@ Set these in `.env`, or in the server's environment.
 | `DEEPGRAM_API_KEY`     | *(required)*                        | Deepgram key, for speech recognition. |
 | `DEEPINFRA_API_KEY`    |                                     | DeepInfra key, for translation and natural voices. |
 | `TRANSLATION_PROVIDER` | `deepinfra`                         | `deepinfra` or `claude`. If it is not set, the server uses DeepInfra when `DEEPINFRA_API_KEY` is set, and Claude when only `ANTHROPIC_API_KEY` is. |
-| `TRANSLATION_MODEL`    | `google/gemma-4-31B-it-turbo`       | The model that translates: a chat model on DeepInfra, or with Claude, a Claude model (default `claude-opus-5`). |
+| `TRANSLATION_MODEL`    | `google/gemma-4-31B-it`             | The model that translates: a chat model on DeepInfra, or with Claude, a Claude model (default `claude-opus-5`). |
 | `VOICE`                | `deepinfra`                         | `deepinfra` for natural voices, or `phone` for each phone's own voice. Without `DEEPINFRA_API_KEY`, it is `phone`. |
 | `ANTHROPIC_API_KEY`    |                                     | Claude key, to translate with Claude. Optional after `ant auth login`. `ANTHROPIC_AUTH_TOKEN` also works. |
 | `TRANSLATION_EFFORT`   | `low`                               | Claude only: `low`, `medium`, `high`, `xhigh` or `max`. Lower is faster, and `low` suits live conversation. |
@@ -449,3 +449,8 @@ word. See `AUTO_DETECT_BASES` in `shared/languages.ts`.
 ## License
 
 MIT
+
+The Android app includes a voice separation model, `convtasnet.onnx`: Conv-TasNet by Joris Cosentino, trained with
+Asteroid on Libri2Mix ([JorisCos/ConvTasNet_Libri2Mix_sepnoisy_16k](https://huggingface.co/JorisCos/ConvTasNet_Libri2Mix_sepnoisy_16k)),
+licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). It was converted to ONNX, with its
+convolutions quantized to 8 bits, and the converted file is under the same license.

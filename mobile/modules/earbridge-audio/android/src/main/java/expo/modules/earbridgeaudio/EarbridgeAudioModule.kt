@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Base64
+import android.util.Log
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
@@ -27,6 +28,7 @@ import java.io.InputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -35,6 +37,8 @@ private const val SAMPLE_RATE = 16_000
 private const val CHUNK_SAMPLES = SAMPLE_RATE / 10 // 100 ms
 private const val CHUNK_BYTES = CHUNK_SAMPLES * 2
 private const val ROUTE_TIMEOUT_MS = 3_000L
+private const val TAG = "EarbridgeAudio"
+private const val PREFERENCES = "earbridge_audio"
 
 /** Outputs that mean the user is wearing earphones. */
 private val EARPHONE_TYPES = setOf(
@@ -53,6 +57,17 @@ class CaptureOptions : Record {
 
   /** Test builds only: a raw 16 kHz 16-bit mono file to play in place of the microphone. */
   @Field val testInputPath: String? = null
+
+  /** Also tell which way the sound came from, when the phone can record two of its microphones. */
+  @Field val directions: Boolean = false
+}
+
+class VoicesOptions : Record {
+  /** The speaker model that made the prints, in the voice models' folder. */
+  @Field val model: String = ""
+
+  /** Voice prints of the voices to keep: mine and the other person's. */
+  @Field val prints: List<List<Double>> = emptyList()
 }
 
 private class CaptureException(message: String, cause: Throwable? = null) :
@@ -64,6 +79,9 @@ private data class Input(val kind: String, val name: String)
 /**
  * Captures the microphone as 16 kHz 16-bit mono PCM in 100 ms chunks.
  *
+ * With `directions`, it records two of the phone's microphones when it can, sends on one of
+ * them, and tells which way each chunk came from.
+ *
  * The audio library's own recorder can't choose the earphones' microphone, so this does it:
  * a Bluetooth headset's microphone is only reachable in communication mode, and in that mode
  * Android also plays everything else (the translations included) through the same headset.
@@ -72,6 +90,8 @@ class EarbridgeAudioModule : Module() {
   // Starting and stopping run here, one at a time: switching to a Bluetooth headset takes a
   // second or two, and nothing else should change the routing meanwhile.
   private val worker = Executors.newSingleThreadExecutor()
+  // Talk reports (test builds) are written here, one line at a time, in order.
+  private val reports = Executors.newSingleThreadExecutor()
 
   // The capture that may send audio; 0 when stopped. Readers of older captures check it and quit.
   @Volatile private var current = 0
@@ -81,6 +101,13 @@ class EarbridgeAudioModule : Module() {
   private var communicationMode = false
   private var legacySco = false
   private var earphones: Boolean? = null
+  private var poseWatcher: PoseWatcher? = null
+  // Goes up whenever the directions heard so far stop applying: the phone moved, or recording changed.
+  private val pose = AtomicInteger()
+  // What happens to what is heard now; set by the app.
+  @Volatile private var micMode = MicMode.OFF
+  // Passes the sound on, keeping only the two people's voices once the app says whose.
+  private val voices = VoiceIsolator({ appContext.reactContext }) { name, body -> sendEvent(name, body) }
 
   private val context: Context
     get() = appContext.reactContext ?: throw CaptureException("The app is not ready.")
@@ -94,7 +121,16 @@ class EarbridgeAudioModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("EarbridgeAudio")
-    Events("onAudio", "onCaptureError", "onEarphonesChange", "onRemoteCommand")
+    Events(
+      "onAudio",
+      "onLevel",
+      "onTurnEnd",
+      "onSeparation",
+      "onIsolation",
+      "onCaptureError",
+      "onEarphonesChange",
+      "onRemoteCommand",
+    )
 
     OnCreate {
       audio.registerAudioDeviceCallback(deviceCallback, Handler(Looper.getMainLooper()))
@@ -107,6 +143,8 @@ class EarbridgeAudioModule : Module() {
       audio.unregisterAudioDeviceCallback(deviceCallback)
       worker.execute { stop() }
       worker.shutdown()
+      reports.shutdown()
+      voices.shutdown()
     }
 
     Function("earphonesConnected") { hasEarphones() }
@@ -115,6 +153,40 @@ class EarbridgeAudioModule : Module() {
     Function("showConversation") { title: String, text: String, muted: Boolean -> showConversation(title, text, muted) }
 
     Function("hideConversation") { hideConversation() }
+
+    // "live", "silent" or "off": what happens to what is heard from now on.
+    Function("setMicMode") { mode: String ->
+      micMode = when (mode) {
+        "live" -> MicMode.LIVE
+        "silent" -> MicMode.SILENT
+        else -> MicMode.OFF
+      }
+    }
+
+    // Keeps only these voices in the sound passed on, from now on.
+    Function("keepVoices") { options: VoicesOptions ->
+      if (!Regex("[A-Za-z0-9._-]+").matches(options.model) || options.model.startsWith(".")) {
+        throw CaptureException("Bad model name.")
+      }
+      val prints = options.prints.map { print -> FloatArray(print.size) { print[it].toFloat() } }
+      voices.keep(prints, File(File(context.filesDir, "voice-models"), options.model))
+    }
+
+    // Passes every voice on from now on.
+    Function("keepAllVoices") { voices.keepAll() }
+
+    // Test builds only: a line of a talk report, in the app's external files folder (readable over USB).
+    Function("appendReport") { name: String, line: String ->
+      reports.execute {
+        try {
+          val folder = File(context.getExternalFilesDir(null), "reports")
+          folder.mkdirs()
+          File(folder, name).appendText(line + "\n")
+        } catch (error: Exception) {
+          Log.w(TAG, "Couldn’t write the talk report: ${error.message}")
+        }
+      }
+    }
 
     AsyncFunction("startCapture") { options: CaptureOptions, promise: Promise ->
       worker.execute {
@@ -132,6 +204,8 @@ class EarbridgeAudioModule : Module() {
     AsyncFunction("stopCapture") { promise: Promise ->
       worker.execute {
         stop()
+        micMode = MicMode.OFF
+        voices.release()
         promise.resolve()
       }
     }
@@ -203,6 +277,20 @@ class EarbridgeAudioModule : Module() {
       preferred = inputs().firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
     }
 
+    val stereo = if (options.directions && input.kind == "phone") startStereo(preferred) else null
+    val record = stereo?.first ?: startMono(source, preferred)
+    recorder = record
+    current = id
+    if (stereo != null) {
+      // The phone may have been moved while it wasn't recording.
+      pose.incrementAndGet()
+      poseWatcher = PoseWatcher(context) { pose.incrementAndGet() }.also { it.start() }
+    }
+    reader = thread(name = "EarBridge microphone") { readLoop(id, record, stereo?.second, options) }
+    return input
+  }
+
+  private fun startMono(source: Int, preferred: AudioDeviceInfo?): AudioRecord {
     val bufferBytes = maxOf(
       AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT),
       CHUNK_BYTES * 4,
@@ -218,31 +306,72 @@ class EarbridgeAudioModule : Module() {
       restoreRouting()
       throw CaptureException("Could not open the microphone. Check that Alo is allowed to use it.")
     }
+    if (!startRecording(record, preferred)) {
+      record.release()
+      restoreRouting()
+      throw CaptureException("The microphone is in use by another app.")
+    }
+    return record
+  }
+
+  /** Records two of the phone's microphones, the first way that works; null if none does. */
+  private fun startStereo(preferred: AudioDeviceInfo?): Pair<AudioRecord, Int>? {
+    val minimum = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
+    if (minimum <= 0) return null
+    for (source in stereoSources()) {
+      val record = try {
+        AudioRecord(source, SAMPLE_RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minimum, CHUNK_BYTES * 2 * 4))
+      } catch (error: Exception) {
+        continue
+      }
+      if (record.state == AudioRecord.STATE_INITIALIZED && record.channelCount == 2 && startRecording(record, preferred)) {
+        Log.i(TAG, "Recording two microphones from source $source")
+        return record to source
+      }
+      record.release()
+    }
+    return null
+  }
+
+  /** Ways to record two microphones, best first: as for speech recognition, unprocessed, plain. */
+  private fun stereoSources(): List<Int> {
+    val sources = mutableListOf(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+    if (audio.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true") {
+      sources += MediaRecorder.AudioSource.UNPROCESSED
+    }
+    sources += MediaRecorder.AudioSource.MIC
+    val known = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    return sources.filterNot { known.getString("one microphone $it", null) == Build.FINGERPRINT }
+  }
+
+  /** Many phones give one microphone twice. Remembered, so this way isn't tried again (until a system update). */
+  private fun rememberOneMicrophone(source: Int, verdict: StereoCheck.Verdict) {
+    Log.i(TAG, "Source $source gives one microphone: $verdict")
+    appContext.reactContext?.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)?.edit()
+      ?.putString("one microphone $source", Build.FINGERPRINT)?.apply()
+  }
+
+  private fun startRecording(record: AudioRecord, preferred: AudioDeviceInfo?): Boolean {
     preferred?.let { record.setPreferredDevice(it) }
     try {
       record.startRecording()
     } catch (error: IllegalStateException) {
       // Checked just below.
     }
-    if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-      record.release()
-      restoreRouting()
-      throw CaptureException("The microphone is in use by another app.")
-    }
-
-    recorder = record
-    current = id
-    reader = thread(name = "EarBridge microphone") { readLoop(id, record) }
-    return input
+    return record.recordingState == AudioRecord.RECORDSTATE_RECORDING
   }
 
-  private fun readLoop(id: Int, record: AudioRecord) {
-    val samples = ShortArray(CHUNK_SAMPLES)
+  /** `stereoSource`: the source recording two microphones, or null when recording one. */
+  private fun readLoop(id: Int, record: AudioRecord, stereoSource: Int?, options: CaptureOptions) {
+    val channels = if (stereoSource != null) 2 else 1
+    val samples = ShortArray(CHUNK_SAMPLES * channels)
     val bytes = ByteArray(CHUNK_BYTES)
+    val finder = if (stereoSource != null) DirectionFinder() else null
+    val check = StereoCheck()
     while (current == id) {
       var filled = 0
-      while (filled < CHUNK_SAMPLES) {
-        val count = record.read(samples, filled, CHUNK_SAMPLES - filled)
+      while (filled < samples.size) {
+        val count = record.read(samples, filled, samples.size - filled)
         if (current != id) return
         if (count < 0) {
           fail(id, "The microphone stopped working (error $count).")
@@ -250,12 +379,38 @@ class EarbridgeAudioModule : Module() {
         }
         filled += count
       }
-      for (index in samples.indices) {
-        val sample = samples[index].toInt()
+      var direction: Direction? = null
+      var channel = 0
+      if (stereoSource != null && finder != null) {
+        val undecided = check.verdict == null
+        check.add(samples)
+        val verdict = check.verdict
+        if (undecided && verdict != null && verdict != StereoCheck.Verdict.TWO) {
+          rememberOneMicrophone(stereoSource, verdict)
+          restart(id, options)
+        }
+        if (verdict == StereoCheck.Verdict.SECOND_ONLY) channel = 1
+        if (check.plausible) direction = finder.add(samples)
+      }
+      for (index in 0 until CHUNK_SAMPLES) {
+        val sample = samples[index * channels + channel].toInt()
         bytes[index * 2] = sample.toByte()
         bytes[index * 2 + 1] = (sample shr 8).toByte()
       }
-      emit(id, bytes)
+      emit(id, bytes, stereoSource != null, direction)
+    }
+  }
+
+  /** Records another way, after this one turned out to give one microphone twice. */
+  private fun restart(id: Int, options: CaptureOptions) {
+    worker.execute {
+      if (current != id) return@execute
+      try {
+        start(options)
+      } catch (error: Exception) {
+        stop()
+        sendEvent("onCaptureError", mapOf("message" to (error.message ?: "The microphone stopped working.")))
+      }
     }
   }
 
@@ -285,16 +440,24 @@ class EarbridgeAudioModule : Module() {
     return Input("test", file.name)
   }
 
-  private fun emit(id: Int, pcm: ByteArray) {
+  /**
+   * `stereo`: recording two microphones, so telling directions (`direction` when it could).
+   * The level goes to the app at once; the sound goes on as the app's mode says, through
+   * `voices`.
+   */
+  private fun emit(id: Int, pcm: ByteArray, stereo: Boolean = false, direction: Direction? = null) {
     if (current != id) return
     var sum = 0.0
     for (index in 0 until pcm.size / 2) {
       val sample = (pcm[index * 2].toInt() and 0xff) or (pcm[index * 2 + 1].toInt() shl 8)
-      val value = sample / 32768.0
+      val value = sample.toShort() / 32768.0
       sum += value * value
     }
     val level = min(1.0, sqrt(sum / (pcm.size / 2)) * 4)
-    sendEvent("onAudio", mapOf("pcm" to Base64.encodeToString(pcm, Base64.NO_WRAP), "level" to level))
+    sendEvent("onLevel", mapOf("level" to level))
+    val mode = micMode
+    // Only what was heard says which way it came from.
+    voices.hear(Heard(pcm.copyOf(), mode, if (stereo) pose.get() else null, if (mode == MicMode.LIVE) direction else null))
   }
 
   private fun fail(id: Int, message: String) {
@@ -307,6 +470,8 @@ class EarbridgeAudioModule : Module() {
 
   private fun stop() {
     current = 0
+    poseWatcher?.stop()
+    poseWatcher = null
     val record = recorder
     recorder = null
     try {
@@ -318,6 +483,7 @@ class EarbridgeAudioModule : Module() {
     reader = null
     record?.release()
     restoreRouting()
+    voices.endRun()
   }
 
   // ---------------------------------------------------------------- routing

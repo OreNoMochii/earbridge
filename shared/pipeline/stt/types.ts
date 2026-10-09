@@ -2,6 +2,16 @@
 // any streaming recognizer (AssemblyAI, Speechmatics, Google, a local Whisper server...)
 // can be plugged in by implementing SttProvider.
 
+/** One recognized word, when the recognizer says when each was said. */
+export interface SttWord {
+  text: string;
+  /** Seconds of audio since the stream's first `sendAudio`. */
+  start: number;
+  end: number;
+  /** Its language tag (a base code like "en"), when the recognizer gives one. */
+  language?: string;
+}
+
 export interface SttResult {
   text: string;
   /** This segment's text will not change any more. */
@@ -18,6 +28,8 @@ export interface SttResult {
    */
   start?: number;
   end?: number;
+  /** Each word with when it was said, when the recognizer times them one by one. */
+  words?: SttWord[];
 }
 
 export type SttStatus = 'connecting' | 'live' | 'reconnecting';

@@ -195,20 +195,6 @@ class EarbridgeVoiceModule : Module() {
     }
   }
 
-  /** False for silence. */
-  private fun normalizeLoudness(samples: FloatArray): Boolean {
-    var sum = 0.0
-    var peak = 0f
-    for (sample in samples) {
-      sum += sample * sample
-      peak = maxOf(peak, abs(sample))
-    }
-    if (peak == 0f) return false
-    val gain = minOf(LOUDNESS / sqrt(sum / samples.size).toFloat(), 1f / peak)
-    for (i in samples.indices) samples[i] *= gain
-    return true
-  }
-
   private fun unload() {
     extractor?.release()
     extractor = null
@@ -247,6 +233,23 @@ class EarbridgeVoiceModule : Module() {
       bytes.force()
     }
   }
+}
+
+/**
+ * Brings speech to the loudness prints are made at, in place (the separated voices too).
+ * False for silence.
+ */
+internal fun normalizeLoudness(samples: FloatArray): Boolean {
+  var sum = 0.0
+  var peak = 0f
+  for (sample in samples) {
+    sum += sample * sample
+    peak = maxOf(peak, abs(sample))
+  }
+  if (peak == 0f) return false
+  val gain = minOf(LOUDNESS / sqrt(sum / samples.size).toFloat(), 1f / peak)
+  for (i in samples.indices) samples[i] *= gain
+  return true
 }
 
 // The few ONNX protobuf fields the fix reads (onnx.proto).

@@ -67,7 +67,7 @@ export function WizardScreen({ settings, onChange }: WizardScreenProps) {
       .find((code) => code !== undefined);
     return (
       <>
-        <Screen key={1} fixed>
+        <Screen key={1} footer={<Button kind="primary" label="Next" next onPress={() => go(2)} />}>
           <View style={styles.part}>
             <WizardHeader step={1} />
             <View style={styles.welcome}>
@@ -79,21 +79,22 @@ export function WizardScreen({ settings, onChange }: WizardScreenProps) {
                 Welcome to Alo
               </Text>
               <Text style={styles.text}>
-                Alo translates what you and another person say, so you can each talk in your own language.
+                Alo translates a conversation while you talk. You hear the other person in your own language.
               </Text>
             </View>
-            <Text style={styles.question} accessibilityRole="header">
-              Which language do you speak?
-            </Text>
-            <LanguageRow
-              code={settings.myLang}
-              selected
-              onPress={() => setPicking(true)}
-              detail={settings.myLang === phoneLang ? 'From your phone’s settings' : undefined}
-            />
-            <Button label="Choose another language" icon="list" onPress={() => setPicking(true)} />
+            <View style={styles.question}>
+              <Text style={styles.questionTitle} accessibilityRole="header">
+                Which language do you speak?
+              </Text>
+              <LanguageRow
+                code={settings.myLang}
+                selected
+                onPress={() => setPicking(true)}
+                detail={settings.myLang === phoneLang ? 'From your phone’s settings' : undefined}
+              />
+              <Button label="Choose another language" icon="list" onPress={() => setPicking(true)} />
+            </View>
           </View>
-          <Button kind="primary" label="Next" next onPress={() => go(2)} />
         </Screen>
         {picking && (
           <LanguageList
@@ -122,6 +123,7 @@ export function WizardScreen({ settings, onChange }: WizardScreenProps) {
           query={query}
           value={settings.theirLang}
           exclude={settings.myLang}
+          titled
           onSelect={(code) => onChange(theirLangPatch(settings, code))}
         />
       </Screen>
@@ -149,6 +151,7 @@ export function WizardScreen({ settings, onChange }: WizardScreenProps) {
           How should Alo translate?
         </Text>
         <EngineCards
+          wizard
           settings={settings}
           onChange={(patch) => {
             setServerError(undefined);
@@ -174,16 +177,20 @@ export function WizardScreen({ settings, onChange }: WizardScreenProps) {
   }
 
   return (
-    <Screen key={4} fixed>
-      <View style={styles.part}>
-        <WizardHeader step={4} onBack={() => go(3)} />
-        <Text style={styles.title} accessibilityRole="header">
-          Where do you want to hear translations?
-        </Text>
-        <OutputCards settings={settings} onChange={onChange} />
-        <Text style={styles.later}>You can change all of this later in Settings.</Text>
-      </View>
-      <Button kind="primary" label="Finish" icon="check" onPress={() => onChange({ setupDone: true })} />
+    <Screen
+      key={4}
+      footer={
+        <View style={styles.bottom}>
+          <Text style={styles.later}>You can change all of this later in Settings.</Text>
+          <Button kind="primary" label="Finish" icon="check" onPress={() => onChange({ setupDone: true })} />
+        </View>
+      }
+    >
+      <WizardHeader step={4} onBack={() => go(3)} />
+      <Text style={styles.title} accessibilityRole="header">
+        Where do you want to hear translations?
+      </Text>
+      <OutputCards wizard settings={settings} onChange={onChange} />
     </Screen>
   );
 }
@@ -210,8 +217,14 @@ const useStyles = themedStyles((palette) => ({
     color: palette.text,
   },
   question: {
+    gap: 12,
+  },
+  questionTitle: {
     ...type.section,
     color: palette.text,
+  },
+  bottom: {
+    gap: 12,
   },
   fields: {
     gap: 20,

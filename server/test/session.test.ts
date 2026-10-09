@@ -121,18 +121,43 @@ describe('solo conversation (one phone)', () => {
       ['One', 'Two', 'Three'],
     );
     const [skipped] = client.of('skipped');
-    assert.deepEqual(skipped && [skipped.speakerId, skipped.lang, skipped.text, skipped.reason], [
-      'them',
-      'es',
-      'Lejos',
-      'distant',
-    ]);
+    assert.deepEqual(skipped && [skipped.speakerId, skipped.lang, skipped.reason], ['them', 'es', 'distant']);
+    assert.equal(skipped && 'text' in skipped, false, 'not its words');
     client.send({ type: 'accept', id: skipped?.id });
     client.send({ type: 'accept', id: 42 });
     await settle();
     assert.deepEqual(client.of('utterance').at(-1)?.text, 'Lejos');
     assert.equal(client.of('translation').filter((m) => m.done && m.id === skipped?.id).length, 1);
     assert.deepEqual(client.of('error'), []);
+  });
+
+  it('skips nothing while whoever talks holds a button', async () => {
+    const { deps, stt } = createDeps();
+    const client = connect(deps);
+    client.send({ type: 'hello', mode: 'solo', myLang: 'en-US', theirLang: 'es', nearbyOnly: true });
+    client.send({ type: 'talk-mode', mode: 'hold' });
+    client.send({ type: 'talk-mode', mode: 42 });
+    const tenth = (value: number) => Buffer.from(new Int16Array(1600).fill(value).buffer);
+    for (let i = 0; i < 30; i++) client.session.handleAudio(tenth(8000));
+    for (let i = 0; i < 10; i++) client.session.handleAudio(tenth(500)); // 24 dB quieter
+    for (const [i, text] of ['One', 'Two', 'Three'].entries()) stt.last.say(text, ['en'], { start: i, end: i + 1 });
+    stt.last.say('Lejos', ['es'], { start: 3, end: 4 });
+    await settle();
+    assert.deepEqual(
+      client.of('utterance').map((m) => m.text),
+      ['One', 'Two', 'Three', 'Lejos'],
+    );
+    assert.deepEqual([...client.of('skipped'), ...client.of('error')], []);
+  });
+
+  it('takes the requests to record their voice, which need voice prints the server does not have', () => {
+    const { deps } = createDeps();
+    const client = connect(deps);
+    client.send({ type: 'hello', mode: 'solo', myLang: 'en-US', theirLang: 'es' });
+    client.send({ type: 'record-voice' });
+    client.send({ type: 'stop-recording' });
+    assert.deepEqual(client.of('error'), []);
+    assert.deepEqual(client.of('voices'), []);
   });
 
   it('rejects two identical languages', () => {

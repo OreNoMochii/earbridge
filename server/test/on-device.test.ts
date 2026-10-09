@@ -133,6 +133,25 @@ describe('OnDeviceSttProvider', () => {
     assert.deepEqual(errors, []);
   });
 
+  it('times words on the stream’s clock, from when their session began', () => {
+    const { recognizer, stream, results } = setup();
+    stream.sendAudio(new Uint8Array(64_000)); // 2 s
+    stream.finalize();
+    stream.sendAudio(new Uint8Array(32_000));
+    recognizer.emit({ session: recognizer.session(0), type: 'segment', text: 'gracias', start: 0.5, end: 1.4 });
+    recognizer.emit({ session: recognizer.session(0), type: 'end' });
+    recognizer.emit({ session: recognizer.session(1), type: 'partial', text: 'adi' });
+    recognizer.emit({ session: recognizer.session(1), type: 'segment', text: 'adiós', start: 0.25, end: 0.75 });
+    assert.deepEqual(
+      results.map(({ text, start, end }) => [text, start, end]),
+      [
+        ['gracias', 0.5, 1.4],
+        ['adi', undefined, undefined],
+        ['adiós', 2.25, 2.75],
+      ],
+    );
+  });
+
   it('gives each session a new id, also across streams', () => {
     const first = setup();
     first.stream.finalize();

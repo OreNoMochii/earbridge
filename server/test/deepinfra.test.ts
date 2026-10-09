@@ -78,7 +78,7 @@ function sendEvents(res: ServerResponse, events: Array<object | string>, newline
 const chunk = (delta: object, finishReason: string | null = null) => ({
   id: 'chatcmpl-test',
   object: 'chat.completion.chunk',
-  model: 'google/gemma-4-31B-it-turbo',
+  model: 'google/gemma-4-31B-it',
   choices: [{ index: 0, delta, finish_reason: finishReason }],
 });
 
@@ -94,7 +94,7 @@ describe('DeepInfraTranslator', () => {
   const translator = (options: { timeoutMs?: number; baseUrl?: string } = {}) =>
     new DeepInfraTranslator({
       apiKey: 'test-key',
-      model: 'google/gemma-4-31B-it-turbo',
+      model: 'google/gemma-4-31B-it',
       baseUrl: api.url,
       keyHint: 'Check DEEPINFRA_API_KEY on the server.',
       modelHint: 'Check TRANSLATION_MODEL on the server.',
@@ -120,7 +120,7 @@ describe('DeepInfraTranslator', () => {
     assert.equal(request.url, '/v1/openai/chat/completions');
     assert.equal(request.headers.authorization, 'Bearer test-key');
     assert.deepEqual(request.body, {
-      model: 'google/gemma-4-31B-it-turbo',
+      model: 'google/gemma-4-31B-it',
       stream: true,
       max_tokens: 2000,
       temperature: 0.2,
@@ -178,10 +178,48 @@ describe('DeepInfraTranslator', () => {
     });
   });
 
+  it('stops a model stuck repeating itself and tries once more', async () => {
+    const looping = (before: string) => [chunk({ content: before }), ...Array.from({ length: 50 }, () => chunk({ content: 'our ' }))];
+    const answers: Array<Array<object | string>> = [];
+    api.handle = (_request, res) => sendEvents(res, answers.shift() ?? []);
+
+    // Stuck from the first word, then right the second time.
+    answers.push(looping(''), [chunk({ content: '¿Dónde está la estación?' }), '[DONE]']);
+    let sent = api.requests.length;
+    const partials: string[] = [];
+    const text = await translator().translate({ ...REQUEST, onPartial: (soFar) => partials.push(soFar) });
+    assert.equal(text, '¿Dónde está la estación?');
+    assert.equal(api.requests.length - sent, 2);
+    assert.equal(partials.at(-1), '¿Dónde está la estación?');
+    assert.ok(partials.every((partial) => !partial.includes('our our our our our our our our')));
+
+    // Stuck twice: what came before the repeating, or an error when nothing did.
+    answers.push(looping('¿Dónde está la estación? '), looping('¿Dónde está la estación? '));
+    assert.equal(await translator().translate(REQUEST), '¿Dónde está la estación?');
+    answers.push(looping(''), looping(''));
+    await assert.rejects(translator().translate(REQUEST), {
+      name: 'TranslationError',
+      message: 'The translation service kept repeating itself.',
+    });
+
+    // Repeats the speaker said stay.
+    const repeats = 'Non, non, non, non, non, non, non, non, non, non.';
+    answers.push([chunk({ content: repeats }), '[DONE]']);
+    sent = api.requests.length;
+    assert.equal(await translator().translate({ ...REQUEST, text: 'No, no, no, no, no, no, no, no, no, no.' }), repeats);
+    assert.equal(api.requests.length - sent, 1);
+
+    // As do short runs and runs of dots.
+    for (const answer of ['Ja, ja, ja, ja, ja.', 'Pues…………………………………………………… sí.']) {
+      answers.push([chunk({ content: answer }), '[DONE]']);
+      assert.equal(await translator().translate(REQUEST), answer);
+    }
+  });
+
   for (const [status, pattern] of [
     [401, /DEEPINFRA_API_KEY/],
     [402, /balance/],
-    [404, /"google\/gemma-4-31B-it-turbo" is not available.*TRANSLATION_MODEL/],
+    [404, /"google\/gemma-4-31B-it" is not available.*TRANSLATION_MODEL/],
     [429, /rate limit/],
     [500, /HTTP 500/],
   ] as const) {

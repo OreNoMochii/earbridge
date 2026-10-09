@@ -1,5 +1,5 @@
-// Colours, type and shapes, following the phone's light or dark appearance. Large, very
-// legible type and big targets: the app is made to be easy for older people.
+// Colours, type and shapes, following the phone's light or dark appearance. Clear,
+// legible type and big enough targets, kept compact so the conversation has the room.
 
 import { StyleSheet, useColorScheme } from 'react-native';
 import type { TextStyle } from 'react-native';
@@ -71,22 +71,21 @@ function text(size: number, weight: '400' | '700' = '400', lineHeight = 1.35): T
   return { fontFamily: FONT, fontSize: size, lineHeight: Math.round(size * lineHeight), fontWeight: weight };
 }
 
-/** Text styles by role, without colours. Nothing is smaller than 15. */
+/** Text styles by role, without colours. Nothing is smaller than 14. */
 export const type = {
-  title: text(30, '700'),
-  heading: text(24, '700'),
-  section: text(22, '700'),
-  button: text(21, '700'),
-  large: text(21),
-  largeBold: text(21, '700'),
-  body: text(19),
-  bodyBold: text(19, '700'),
-  compact: text(18, '700'),
-  secondary: text(17),
-  secondaryBold: text(17, '700'),
-  small: text(15),
-  smallBold: text(15, '700'),
-  partner: text(34, '700', 1.4),
+  title: text(26, '700'),
+  heading: text(21, '700'),
+  section: text(19, '700'),
+  button: text(18, '700'),
+  largeBold: text(19, '700'),
+  body: text(17),
+  bodyBold: text(17, '700'),
+  compact: text(16, '700'),
+  secondary: text(15),
+  secondaryBold: text(15, '700'),
+  small: text(14),
+  smallBold: text(14, '700'),
+  code: text(30, '700'),
 } satisfies Record<string, TextStyle>;
 
 export function usePalette(): Palette {

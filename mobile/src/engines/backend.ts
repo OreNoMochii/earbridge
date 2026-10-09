@@ -2,6 +2,7 @@
 // the phone itself (see in-app-backend.ts). Both speak the server's protocol, so the
 // conversation screen works the same either way.
 
+import type { Spatial } from '../../../shared/pipeline/direction.ts';
 import type { ClientMessage, ServerMessage } from '../../../shared/protocol.ts';
 import type { ConnectionState, EndReason } from '../connection.ts';
 
@@ -17,7 +18,14 @@ export interface BackendEvents {
 export interface Backend {
   start(): void;
   send(message: ClientMessage): void;
-  /** 16 kHz mono PCM16. */
-  sendAudio(pcm: ArrayBuffer): void;
+  /** 16 kHz mono PCM16, and which way it came from when the phone can tell. */
+  sendAudio(pcm: ArrayBuffer, spatial?: Spatial): void;
   stop(): void;
+  /**
+   * The other person's voice from a print saved in an earlier conversation. Only the phone
+   * itself prints voices: prints are never sent anywhere. False when it cannot be used.
+   */
+  usePartnerVoice?(print: Float32Array): boolean;
+  /** Their voice print as recorded in this conversation, e.g. to save it for the next. */
+  partnerVoice?(): Float32Array | undefined;
 }

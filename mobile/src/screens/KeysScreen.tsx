@@ -71,7 +71,7 @@ export function KeysScreen({ settings, onChange, onBack, onDone, wizard = false,
   const pasteFailed = (name: KeyName, message: string) => setErrors((current) => ({ ...current, [name]: message }));
 
   return (
-    <Screen footer={<Button kind="primary" label="Save" icon="check" onPress={save} />}>
+    <Screen>
       {wizard ? (
         <WizardHeader step={3} onBack={onBack} />
       ) : (
@@ -118,6 +118,7 @@ export function KeysScreen({ settings, onChange, onBack, onDone, wizard = false,
           <Text style={styles.helpText}>Stored encrypted, only on this phone, and sent only to those two services.</Text>
         </View>
       </View>
+      <Button kind="primary" label="Save" icon="check" onPress={save} />
     </Screen>
   );
 }
@@ -200,7 +201,7 @@ const useStyles = themedStyles((palette) => ({
     flexDirection: 'row',
   },
   intro: {
-    gap: 14,
+    gap: 10,
   },
   title: {
     ...type.title,

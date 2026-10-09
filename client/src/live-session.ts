@@ -334,8 +334,8 @@ export class LiveSession {
   }
 
   private onSkipped(message: SkippedMessage): void {
-    const { id, lang, text, reason } = message;
-    this.view.feed.addSkipped({ id, lang, text, reason }, () => this.accept(id));
+    const { id, lang, reason } = message;
+    this.view.feed.addSkipped({ id, lang, reason }, () => this.accept(id));
     // The server forgets the oldest, so it can no longer be translated.
     this.skips.push(id);
     const forgotten = this.skips.length > SKIPPED_KEPT ? this.skips.shift() : undefined;

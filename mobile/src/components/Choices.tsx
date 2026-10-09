@@ -41,7 +41,7 @@ export function ChoiceCard({ icon, title, description, selected, onPress, badge,
       ]}
     >
       <View style={[styles.iconCircle, selected && styles.iconCircleSelected, disabled && styles.iconCircleDisabled]}>
-        <Icon name={icon} size={28} color={disabled ? palette.idle : palette.accent} />
+        <Icon name={icon} size={24} color={disabled ? palette.idle : palette.accent} />
       </View>
       <View style={styles.texts}>
         {badge !== undefined && (
@@ -57,14 +57,18 @@ export function ChoiceCard({ icon, title, description, selected, onPress, badge,
           note !== undefined && <Text style={styles.description}>{note}</Text>
         )}
       </View>
-      <Radio selected={selected} />
+      <Radio selected={selected} disabled={disabled} />
     </Pressable>
   );
 }
 
-function Radio({ selected }: { selected: boolean }) {
+function Radio({ selected, disabled = false }: { selected: boolean; disabled?: boolean }) {
   const { styles } = useStyles();
-  return <View style={[styles.radio, selected && styles.radioSelected]}>{selected && <View style={styles.radioDot} />}</View>;
+  return (
+    <View style={[styles.radio, selected && styles.radioSelected, disabled && styles.radioDisabled]}>
+      {selected && <View style={styles.radioDot} />}
+    </View>
+  );
 }
 
 interface SwitchRowProps {
@@ -96,7 +100,7 @@ export function SwitchRow({ title, description, value, onChange, disabled = fals
       </View>
       <View style={styles.switch}>
         <Text style={[styles.switchState, on && styles.switchStateOn]}>{on ? 'On' : 'Off'}</Text>
-        <View style={[styles.track, on ? styles.trackOn : styles.trackOff]}>
+        <View style={[styles.track, on ? styles.trackOn : styles.trackOff, disabled && styles.trackDisabled]}>
           <View style={[styles.knob, on ? styles.knobOn : styles.knobOff]} />
         </View>
       </View>
@@ -175,15 +179,15 @@ const useStyles = themedStyles((palette) => ({
   card: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 16,
-    padding: 20,
+    gap: 12,
+    padding: 14,
     borderWidth: 2,
     borderColor: palette.border,
     borderRadius: RADIUS,
     backgroundColor: palette.surface,
   },
   cardSelected: {
-    padding: 19,
+    padding: 13,
     borderWidth: 3,
     borderColor: palette.accent,
     backgroundColor: palette.accentSoft,
@@ -196,11 +200,11 @@ const useStyles = themedStyles((palette) => ({
     opacity: 0.75,
   },
   iconCircle: {
-    width: 56,
-    height: 56,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 28,
+    borderRadius: 22,
     backgroundColor: palette.accentSoft,
   },
   iconCircleSelected: {
@@ -211,7 +215,7 @@ const useStyles = themedStyles((palette) => ({
   },
   texts: {
     flex: 1,
-    gap: 6,
+    gap: 4,
   },
   badge: {
     alignSelf: 'flex-start',
@@ -252,6 +256,10 @@ const useStyles = themedStyles((palette) => ({
   radioSelected: {
     borderColor: palette.accent,
   },
+  radioDisabled: {
+    borderColor: palette.border,
+    backgroundColor: palette.surface2,
+  },
   radioDot: {
     width: 16,
     height: 16,
@@ -262,7 +270,7 @@ const useStyles = themedStyles((palette) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 16,
-    paddingVertical: 14,
+    paddingVertical: 10,
   },
   switchTexts: {
     flex: 1,
@@ -303,6 +311,9 @@ const useStyles = themedStyles((palette) => ({
     borderColor: palette.borderStrong,
     backgroundColor: palette.surface2,
   },
+  trackDisabled: {
+    borderColor: palette.border,
+  },
   knob: {
     width: 26,
     height: 26,
@@ -334,7 +345,7 @@ const useStyles = themedStyles((palette) => ({
   },
   segment: {
     flex: 1,
-    minHeight: 64,
+    minHeight: 52,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 4,
@@ -360,18 +371,18 @@ const useStyles = themedStyles((palette) => ({
     textAlign: 'center',
   },
   radioRow: {
-    minHeight: 64,
+    minHeight: 52,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderWidth: 2,
     borderColor: palette.border,
     borderRadius: 16,
     backgroundColor: palette.surface,
   },
   radioRowSelected: {
-    paddingHorizontal: 15,
+    paddingHorizontal: 13,
     borderWidth: 3,
     borderColor: palette.accent,
     backgroundColor: palette.accentSoft,

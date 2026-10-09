@@ -7,7 +7,7 @@ import * as SecureStore from 'expo-secure-store';
 
 import { loadSettings, saveSettings } from '../../client/src/settings.ts';
 import type { Settings } from '../../client/src/settings.ts';
-import { localSupport } from './engines/local.ts';
+import { localSupport, localWordTimings } from './engines/local.ts';
 import { storage } from './storage.ts';
 
 /**
@@ -32,8 +32,22 @@ export interface AppSettings extends Settings {
   deepgramKey: string;
   deepinfraKey: string;
   mic: MicChoice;
-  /** One phone, own keys: translate only my voice (recorded once) and the other person's. */
+  /**
+   * One phone, translated by the app itself (see `appFilters`): translate only my voice
+   * (recorded once) and the other person's.
+   */
   onlyOurVoices: boolean;
+  /**
+   * With `onlyOurVoices`, on Android: once both voices are known, split what the microphone
+   * hears into voices before the speech recognizer hears it, and keep only ours.
+   */
+  separateVoices: boolean;
+  /**
+   * One phone, translated by the app itself: skip voices from the phone's sides, told by
+   * which way they come (with a phone lying between the two people that records two
+   * microphones).
+   */
+  ignoreSides: boolean;
   /** The first-time setup was finished (or the app was used before it existed). */
   setupDone: boolean;
 }
@@ -65,6 +79,8 @@ export function loadAppSettings(): AppSettings {
   const mic = saved['mic'] === 'phone' || saved['mic'] === 'earphones' ? saved['mic'] : 'auto';
   const engine = isEngine(saved['engine']) ? saved['engine'] : defaultEngine(server);
   const onlyOurVoices = saved['onlyOurVoices'] === true;
+  const separateVoices = saved['separateVoices'] !== false;
+  const ignoreSides = saved['ignoreSides'] !== false;
   // Settings saved by a version without the setup were made by someone who set the app up.
   const setupDone = saved['setupDone'] === true || (stored !== null && !('setupDone' in saved));
   return {
@@ -75,16 +91,31 @@ export function loadAppSettings(): AppSettings {
     deepinfraKey: readKey(DEEPINFRA_KEY),
     mic,
     onlyOurVoices,
+    separateVoices,
+    ignoreSides,
     setupDone,
   };
 }
 
 export function saveAppSettings(settings: AppSettings): void {
-  const { engine, server, deepgramKey, deepinfraKey, mic, onlyOurVoices, setupDone, ...shared } = settings;
+  const { engine, server, deepgramKey, deepinfraKey, mic, onlyOurVoices, separateVoices, ignoreSides, setupDone, ...shared } = settings;
   saveSettings(storage, shared);
-  storage.setItem(APP_KEY, JSON.stringify({ engine, server, mic, onlyOurVoices, setupDone }));
+  storage.setItem(APP_KEY, JSON.stringify({ engine, server, mic, onlyOurVoices, separateVoices, ignoreSides, setupDone }));
   storeKey(DEEPGRAM_KEY, deepgramKey);
   storeKey(DEEPINFRA_KEY, deepinfraKey);
+}
+
+/**
+ * Whether the noisy-place filters can work: they judge speech by its sound, so the speech
+ * recognition must say when each word was said. The phone's own does from Android 14.
+ */
+export function filtersWork(engine: Engine): boolean {
+  return engine !== 'local' || localWordTimings();
+}
+
+/** Whether the filters only the app runs itself work: voices from the sides, only our two voices. */
+export function appFilters(engine: Engine): boolean {
+  return engine !== 'server' && filtersWork(engine);
 }
 
 /** Whether to listen through the earphones' microphone, when they have one. */

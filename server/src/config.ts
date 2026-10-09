@@ -75,7 +75,7 @@ function readTranslation(env: NodeJS.ProcessEnv, deepinfraApiKey: string | undef
     if (!deepinfraApiKey) {
       throw new ConfigError(`TRANSLATION_PROVIDER is deepinfra, but DEEPINFRA_API_KEY is not set (${DEEPINFRA_KEYS_URL}).`);
     }
-    return { provider, apiKey: deepinfraApiKey, model: model ?? 'google/gemma-4-31B-it-turbo' };
+    return { provider, apiKey: deepinfraApiKey, model: model ?? 'google/gemma-4-31B-it' };
   }
   const effort = readChoice(env, 'TRANSLATION_EFFORT', EFFORTS) ?? 'low';
   return { provider, model: model ?? 'claude-opus-5', effort, hasApiKey: hasAnthropicKey };

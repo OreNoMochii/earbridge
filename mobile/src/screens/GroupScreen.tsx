@@ -109,25 +109,32 @@ export function GroupScreen({ settings, onChange, invitedRoom, error, onForgetIn
                 {invitedServer ? ` on ${serverLabel(invitedServer)}` : ''}
               </Text>
             </View>
-            <CompactButton label="Start a new group instead" icon="users" onPress={onForgetInvite} />
+            <CompactButton
+              label="Start a new group instead"
+              icon="users"
+              onPress={onForgetInvite}
+              style={styles.invitedAction}
+            />
           </View>
         )}
 
-        <TextField
-          ref={nameInput}
-          label="Your name, shown to the others"
-          error={nameError}
-          value={settings.name}
-          onChangeText={(name) => {
-            setNameError(undefined);
-            onChange({ name });
-          }}
-          maxLength={MAX_NAME_LENGTH}
-          autoCapitalize="words"
-          autoComplete="nickname"
-          returnKeyType="done"
-        />
-        <SelectField label="You speak" value={nativeLabel(settings.myLang)} onPress={() => setPicking(true)} />
+        <View style={styles.aboutYou}>
+          <TextField
+            ref={nameInput}
+            label="Your name, shown to the others"
+            error={nameError}
+            value={settings.name}
+            onChangeText={(name) => {
+              setNameError(undefined);
+              onChange({ name });
+            }}
+            maxLength={MAX_NAME_LENGTH}
+            autoCapitalize="words"
+            autoComplete="nickname"
+            returnKeyType="done"
+          />
+          <SelectField label="You speak" value={nativeLabel(settings.myLang)} onPress={() => setPicking(true)} />
+        </View>
         {invitedRoom !== undefined ? (
           <Button kind="primary" label="Join group" icon="log-in" onPress={() => go(invitedRoom)} />
         ) : (
@@ -255,7 +262,7 @@ const useStyles = themedStyles((palette) => ({
     flexDirection: 'row',
   },
   intro: {
-    gap: 14,
+    gap: 8,
   },
   title: {
     ...type.title,
@@ -267,7 +274,7 @@ const useStyles = themedStyles((palette) => ({
   },
   invited: {
     gap: 14,
-    padding: 16,
+    padding: 14,
     borderWidth: 2,
     borderColor: palette.accent,
     borderRadius: 16,
@@ -283,10 +290,16 @@ const useStyles = themedStyles((palette) => ({
     flex: 1,
     color: palette.text,
   },
+  invitedAction: {
+    alignSelf: 'flex-start',
+  },
+  aboutYou: {
+    gap: 16,
+  },
   or: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    gap: 12,
   },
   line: {
     flex: 1,
@@ -298,12 +311,12 @@ const useStyles = themedStyles((palette) => ({
     color: palette.muted,
   },
   section: {
-    gap: 16,
+    gap: 12,
   },
   codeRow: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 6,
+    gap: 8,
   },
   codeBox: {
     flex: 1,
@@ -317,7 +330,7 @@ const useStyles = themedStyles((palette) => ({
     backgroundColor: palette.surface,
   },
   codeGap: {
-    marginLeft: 8,
+    marginLeft: 16,
   },
   codeBoxActive: {
     borderWidth: 3,

@@ -1,13 +1,15 @@
-// A big button to hold while talking.
+// A button to hold while talking.
 
-import { Text, useWindowDimensions, View } from 'react-native';
+import { Text, View } from 'react-native';
 
-import { RADIUS_LG, themedStyles, type } from '../theme.ts';
+import { RADIUS, themedStyles, type } from '../theme.ts';
 import { Icon } from './Icon.tsx';
 
 interface HoldButtonProps {
-  /** Whose button it is, e.g. "Me · English". */
-  detail: string;
+  /** Whose button it is, e.g. "Me". */
+  who: string;
+  /** The language they speak, in its own words, e.g. "Español". */
+  language: string;
   /** Held down, as the conversation sees it. */
   pressed: boolean;
   onChange(pressed: boolean): void;
@@ -17,15 +19,13 @@ interface HoldButtonProps {
  * On while a finger is on it, even if it slides off. With a screen reader, a double tap
  * turns it on and another turns it off.
  */
-export function HoldButton({ detail, pressed, onChange }: HoldButtonProps) {
+export function HoldButton({ who, language, pressed, onChange }: HoldButtonProps) {
   const { styles, palette } = useStyles();
-  const short = useWindowDimensions().height < 700;
-  const color = pressed ? palette.live : palette.text;
   return (
     <View
       accessible
       accessibilityRole="button"
-      accessibilityLabel={detail}
+      accessibilityLabel={`${who}, ${language}`}
       accessibilityHint="Hold while you talk"
       accessibilityState={{ selected: pressed }}
       accessibilityActions={[{ name: 'activate' }]}
@@ -37,13 +37,17 @@ export function HoldButton({ detail, pressed, onChange }: HoldButtonProps) {
       onResponderGrant={() => onChange(true)}
       onResponderRelease={() => onChange(false)}
       onResponderTerminate={() => onChange(false)}
-      style={[styles.hold, short && styles.holdShort, pressed && styles.holdPressed]}
+      style={[styles.hold, pressed && styles.holdPressed]}
     >
-      <Icon name="mic" size={short ? 32 : 40} color={pressed ? palette.live : palette.accent} />
-      <Text style={[styles.label, { color }]}>{pressed ? 'Listening…' : 'Hold while you talk'}</Text>
-      <Text style={styles.detail} numberOfLines={1}>
-        {detail}
-      </Text>
+      <Icon name="mic" size={24} color={pressed ? palette.live : palette.accent} />
+      <View style={styles.texts}>
+        <Text style={[styles.who, pressed && styles.listening]} numberOfLines={1}>
+          {who}
+        </Text>
+        <Text style={[styles.language, pressed && styles.listening]} numberOfLines={1}>
+          {pressed ? 'Listening…' : language}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -51,35 +55,37 @@ export function HoldButton({ detail, pressed, onChange }: HoldButtonProps) {
 const useStyles = themedStyles((palette) => ({
   hold: {
     flex: 1,
-    minHeight: 140,
+    minHeight: 64,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 8,
+    gap: 8,
+    paddingVertical: 6,
     paddingHorizontal: 10,
     borderWidth: 2,
     borderColor: palette.borderStrong,
-    borderRadius: RADIUS_LG,
+    borderRadius: RADIUS,
     backgroundColor: palette.surface,
   },
-  holdShort: {
-    minHeight: 112,
-    gap: 4,
-  },
   holdPressed: {
-    paddingVertical: 7,
+    paddingVertical: 5,
     paddingHorizontal: 9,
     borderWidth: 3,
     borderColor: palette.live,
     backgroundColor: palette.liveSoft,
   },
-  label: {
-    ...type.button,
-    textAlign: 'center',
+  texts: {
+    flexShrink: 1,
   },
-  detail: {
-    ...type.secondary,
+  who: {
+    ...type.compact,
+    color: palette.text,
+  },
+  language: {
+    ...type.small,
     color: palette.muted,
-    textAlign: 'center',
+  },
+  listening: {
+    color: palette.live,
   },
 }));

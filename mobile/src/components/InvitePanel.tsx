@@ -57,7 +57,7 @@ const useStyles = themedStyles((palette) => ({
   panel: {
     alignItems: 'center',
     gap: 14,
-    padding: 20,
+    padding: 18,
     borderWidth: 2,
     borderColor: palette.accent,
     borderRadius: RADIUS_LG,
@@ -71,7 +71,7 @@ const useStyles = themedStyles((palette) => ({
     backgroundColor: '#FFFFFF',
   },
   code: {
-    ...type.partner,
+    ...type.code,
     letterSpacing: 2,
     color: palette.text,
   },

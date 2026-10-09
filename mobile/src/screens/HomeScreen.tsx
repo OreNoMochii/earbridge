@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import { languageName } from '../../../shared/languages.ts';
+import { appFilters } from '../app-settings.ts';
 import type { AppSettings } from '../app-settings.ts';
 import { Banner, Logo, Note } from '../components/Basics.tsx';
 import { CompactButton, HeroButton } from '../components/Button.tsx';
@@ -12,6 +13,8 @@ import type { IconName } from '../components/Icon.tsx';
 import { LanguageList } from '../components/LanguageList.tsx';
 import { Screen } from '../components/Screen.tsx';
 import type { EndReason } from '../connection.ts';
+import { keepsTalkReports } from '../engines/talk-report.ts';
+import { canCheckVoices } from '../engines/voices.ts';
 import { nativeLabel } from '../language-names.ts';
 import { RADIUS, RADIUS_LG, themedStyles, type } from '../theme.ts';
 import { EndBanner, myLangPatch, theirLangPatch, whoIsTalking } from './parts.tsx';
@@ -38,21 +41,26 @@ export function HomeScreen({ settings, onChange, error, problem, onStart, onGrou
 
   const setup: { icon: IconName; text: string }[] = [
     settings.engine === 'local'
-      ? { icon: 'smartphone', text: 'Translates on this phone' }
+      ? { icon: 'smartphone', text: 'Translating on this phone' }
       : settings.engine === 'keys'
-        ? { icon: 'cloud', text: 'Translates online, with your accounts' }
-        : { icon: 'monitor', text: 'Translates through a computer' },
+        ? { icon: 'cloud', text: 'Translating online, best quality' }
+        : { icon: 'monitor', text: 'Translating through a computer' },
     settings.talkMode === 'hold'
       ? { icon: 'hand', text: 'Press and hold to talk' }
-      : { icon: 'mic', text: 'Talk freely: the microphone stays on' },
+      : { icon: 'mic', text: 'Microphone stays on' },
     settings.output === 'speaker'
       ? { icon: 'volume-2', text: 'Translations out loud on the phone' }
-      : { icon: 'headphones', text: 'Translations in your earphones' },
+      : { icon: 'headphones', text: 'You hear them in your earphones' },
   ];
+  // Settings turns it on only once the user's voice is saved.
+  if (appFilters(settings.engine) && settings.onlyOurVoices && canCheckVoices()) {
+    setup.push({ icon: 'users', text: 'Only your two voices' });
+  }
+  if (keepsTalkReports) setup.push({ icon: 'list', text: 'Talk reports kept on this phone' });
 
   return (
     <>
-      <Screen gap={20}>
+      <Screen>
         <View style={styles.top}>
           <Logo />
           <CompactButton label="Settings" icon="settings" onPress={onSettings} />
@@ -82,8 +90,10 @@ export function HomeScreen({ settings, onChange, error, problem, onStart, onGrou
           <LanguageButton label="They speak" code={settings.theirLang} onPress={() => setPicking('theirLang')} />
         </View>
 
-        <HeroButton title="Start talking" subtitle="One phone, the two of you" icon="mic" onPress={onStart} />
-        <HeroButton kind="other" title="Group conversation" subtitle="Everyone on their own phone" icon="users" onPress={onGroup} />
+        <View style={styles.actions}>
+          <HeroButton title="Start talking" subtitle="One phone, the two of you" icon="mic" onPress={onStart} />
+          <HeroButton kind="other" title="Group conversation" subtitle="Everyone on their own phone" icon="users" onPress={onGroup} />
+        </View>
 
         <View style={styles.summary}>
           <View style={styles.summaryHead}>
@@ -105,7 +115,7 @@ export function HomeScreen({ settings, onChange, error, problem, onStart, onGrou
       </Screen>
       {picking && (
         <LanguageList
-          title={picking === 'myLang' ? 'Which language do you speak?' : 'Which language does the other person speak?'}
+          title={picking === 'myLang' ? 'You speak' : 'The other person speaks'}
           value={settings[picking]}
           onSelect={(code) => {
             onChange(picking === 'myLang' ? myLangPatch(settings, code) : theirLangPatch(settings, code));
@@ -145,7 +155,7 @@ const useStyles = themedStyles((palette) => ({
     gap: 12,
   },
   languages: {
-    padding: 8,
+    padding: 6,
     borderWidth: 2,
     borderColor: palette.border,
     borderRadius: RADIUS_LG,
@@ -183,6 +193,9 @@ const useStyles = themedStyles((palette) => ({
     flex: 1,
     height: 2,
     backgroundColor: palette.border,
+  },
+  actions: {
+    gap: 12,
   },
   summary: {
     gap: 10,

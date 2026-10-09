@@ -7,7 +7,7 @@ const base = { DEEPGRAM_API_KEY: 'dg-key' };
 describe('loadConfig', () => {
   it('translates and reads aloud with DeepInfra when its key is set', () => {
     const config = loadConfig({ ...base, DEEPINFRA_API_KEY: 'di-key', ANTHROPIC_API_KEY: 'sk-ant' });
-    assert.deepEqual(config.translation, { provider: 'deepinfra', apiKey: 'di-key', model: 'google/gemma-4-31B-it-turbo' });
+    assert.deepEqual(config.translation, { provider: 'deepinfra', apiKey: 'di-key', model: 'google/gemma-4-31B-it' });
     assert.deepEqual(config.voice, { provider: 'deepinfra', apiKey: 'di-key' });
   });
 

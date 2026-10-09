@@ -1,4 +1,4 @@
-// Choosing a language: the common ones first, then all of them, each in its own name and
+// Choosing a language: the common ones first, then the others, each in its own name and
 // in English, so the other person can find theirs too. Typing narrows the list down.
 
 import { useEffect, useRef, useState } from 'react';
@@ -13,12 +13,22 @@ import { CompactButton } from './Button.tsx';
 import { TextField } from './Field.tsx';
 import { Icon } from './Icon.tsx';
 
-const COMMON = ['en-US', 'es', 'fr', 'de', 'ja', 'zh-CN', 'ko', 'ar', 'it', 'pt-BR', 'ru', 'hi'].filter((code) =>
-  LANGUAGES.some((language) => language.code === code),
-);
-const OTHERS = LANGUAGES.filter((language) => !COMMON.includes(language.code))
-  .sort((a, b) => a.name.localeCompare(b.name, 'en'))
-  .map((language) => language.code);
+const COMMON = known(['en-US', 'en-GB', 'es', 'fr', 'de', 'it', 'pt-BR', 'ja', 'ko', 'zh-CN', 'zh-TW', 'hi', 'ar']);
+const OTHERS = othersThan(COMMON);
+/** Fewer common ones where the list is part of a page, like in the setup. */
+const FEW = known(['ja', 'es', 'fr', 'de', 'zh-CN', 'ko', 'ar']);
+const NOT_FEW = othersThan(FEW);
+
+function known(codes: readonly string[]): string[] {
+  return codes.filter((code) => LANGUAGES.some((language) => language.code === code));
+}
+
+/** The rest, by their English name. */
+function othersThan(codes: readonly string[]): string[] {
+  return LANGUAGES.filter((language) => !codes.includes(language.code))
+    .sort((a, b) => a.name.localeCompare(b.name, 'en'))
+    .map((language) => language.code);
+}
 
 /** Lower case, without accents: "espanol" finds Español. */
 function fold(text: string): string {
@@ -47,7 +57,8 @@ interface LanguageRowProps {
 export function LanguageRow({ code, selected, onPress, detail, onLayout }: LanguageRowProps) {
   const { styles, palette } = useStyles();
   const native = nativeLanguageName(code);
-  const second = detail ?? (native === undefined ? undefined : languageName(code));
+  // Also for English, so that every language looks the same.
+  const second = detail ?? languageName(code);
   return (
     <Pressable
       accessibilityRole="radio"
@@ -59,7 +70,7 @@ export function LanguageRow({ code, selected, onPress, detail, onLayout }: Langu
     >
       <View style={styles.texts}>
         <Text style={styles.native}>{native ?? languageName(code)}</Text>
-        {second !== undefined && <Text style={styles.english}>{second}</Text>}
+        <Text style={styles.english}>{second}</Text>
       </View>
       {selected && <Icon name="check" size={28} color={palette.accent} />}
     </Pressable>
@@ -87,13 +98,15 @@ interface LanguageRowsProps {
   value: string;
   onSelect(code: string): void;
   /** Where the chosen language is, so the list can start there. */
-  onSelectedLayout?: ((y: number) => void) | undefined;
+  onSelectedLayout?: ((y: number, height: number) => void) | undefined;
   /** Left out, with its other variants: e.g. my own language, when choosing theirs. */
   exclude?: string | undefined;
+  /** Fewer common languages, under a title: on a page that asks for a language. */
+  titled?: boolean;
 }
 
 /** All languages, common ones first; or those that match what was typed. */
-export function LanguageRows({ query, value, onSelect, onSelectedLayout, exclude }: LanguageRowsProps) {
+export function LanguageRows({ query, value, onSelect, onSelectedLayout, exclude, titled = false }: LanguageRowsProps) {
   const { styles } = useStyles();
   const folded = fold(query.trim());
   const shown = (code: string) => exclude === undefined || !sameLanguage(code, exclude);
@@ -103,7 +116,11 @@ export function LanguageRows({ query, value, onSelect, onSelectedLayout, exclude
       code={code}
       selected={code === value}
       onPress={() => onSelect(code)}
-      onLayout={code === value && onSelectedLayout ? (event) => onSelectedLayout(event.nativeEvent.layout.y) : undefined}
+      onLayout={
+        code === value && onSelectedLayout
+          ? (event) => onSelectedLayout(event.nativeEvent.layout.y, event.nativeEvent.layout.height)
+          : undefined
+      }
     />
   );
   if (folded) {
@@ -114,16 +131,22 @@ export function LanguageRows({ query, value, onSelect, onSelectedLayout, exclude
       </View>
     );
   }
+  const common = (titled ? FEW : COMMON).filter(shown);
+  const others = (titled ? NOT_FEW : OTHERS).filter(shown);
   return (
     <View style={styles.rows} accessibilityRole="radiogroup">
-      <Text style={styles.heading} accessibilityRole="header">
-        Common languages
+      {titled && (
+        <Text style={styles.heading} accessibilityRole="header">
+          Common languages
+        </Text>
+      )}
+      {common.map(row)}
+      <Text style={styles.more}>
+        {titled
+          ? `Scroll down for all ${common.length + others.length} languages`
+          : `…and ${others.length} more. Scroll down, or search.`}
       </Text>
-      {COMMON.filter(shown).map(row)}
-      <Text style={[styles.heading, styles.headingSpaced]} accessibilityRole="header">
-        All languages
-      </Text>
-      {OTHERS.filter(shown).map(row)}
+      {others.map(row)}
     </View>
   );
 }
@@ -141,6 +164,7 @@ export function LanguageList({ title, value, onSelect, onClose }: LanguageListPr
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const scroll = useRef<ScrollView>(null);
+  const shown = useRef(0);
   const rowsTop = useRef(0);
   const scrolled = useRef(false);
 
@@ -152,12 +176,15 @@ export function LanguageList({ title, value, onSelect, onClose }: LanguageListPr
     return () => subscription.remove();
   }, [onClose]);
 
-  // Starts with the chosen language in view, a little below the top.
-  const onSelectedLayout = (y: number) => {
+  // When the chosen language is further down than the screen, starts with it in view. Once
+  // every part of the list has its place.
+  const onSelectedLayout = (y: number, height: number) => {
     if (scrolled.current) return;
     scrolled.current = true;
-    const top = rowsTop.current + y - 120;
-    if (top > 0) scroll.current?.scrollTo({ y: top, animated: false });
+    setTimeout(() => {
+      const top = rowsTop.current + y;
+      if (top + height > shown.current) scroll.current?.scrollTo({ y: top - 120, animated: false });
+    }, 0);
   };
 
   return (
@@ -165,7 +192,12 @@ export function LanguageList({ title, value, onSelect, onClose }: LanguageListPr
       behavior="padding"
       style={[styles.overlay, { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }]}
     >
-      <View style={styles.top}>
+      <ScrollView
+        ref={scroll}
+        keyboardShouldPersistTaps="handled"
+        onLayout={(event) => (shown.current = event.nativeEvent.layout.height)}
+        contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 28 }]}
+      >
         <View style={styles.header}>
           <Text style={styles.title} accessibilityRole="header">
             {title}
@@ -173,12 +205,6 @@ export function LanguageList({ title, value, onSelect, onClose }: LanguageListPr
           <CompactButton label="Close" icon="x" onPress={onClose} />
         </View>
         <LanguageSearch value={query} onChange={setQuery} />
-      </View>
-      <ScrollView
-        ref={scroll}
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 28 }]}
-      >
         <View onLayout={(event) => (rowsTop.current = event.nativeEvent.layout.y)}>
           <LanguageRows query={query} value={value} onSelect={onSelect} onSelectedLayout={onSelectedLayout} />
         </View>
@@ -197,14 +223,6 @@ const useStyles = themedStyles((palette) => ({
     zIndex: 20,
     backgroundColor: palette.bg,
   },
-  top: {
-    gap: 20,
-    paddingTop: 12,
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-    borderBottomWidth: 2,
-    borderBottomColor: palette.border,
-  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -216,7 +234,8 @@ const useStyles = themedStyles((palette) => ({
     color: palette.text,
   },
   list: {
-    paddingTop: 16,
+    gap: 20,
+    paddingTop: 12,
     paddingHorizontal: 20,
   },
   rows: {
@@ -226,8 +245,10 @@ const useStyles = themedStyles((palette) => ({
     ...type.secondaryBold,
     color: palette.muted,
   },
-  headingSpaced: {
-    marginTop: 12,
+  more: {
+    ...type.secondary,
+    color: palette.muted,
+    textAlign: 'center',
   },
   nothing: {
     ...type.body,
@@ -239,8 +260,8 @@ const useStyles = themedStyles((palette) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     borderWidth: 2,
     borderColor: 'transparent',
     borderRadius: 14,

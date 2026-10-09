@@ -21,6 +21,21 @@ interface ChatChunk {
   error?: unknown;
 }
 
+/** One answer; when the model got stuck repeating itself, what it said before that. */
+interface Answer {
+  text: string;
+  looped: boolean;
+}
+
+// Now and then a model gets stuck saying one word over and over ("our our our…") until it
+// runs out of tokens. A piece of up to LOOP_PIECE characters said LOOP_TIMES times in a
+// row, over LOOP_LENGTH characters or more, is such a loop.
+const LOOP_PIECE = 32;
+const LOOP_TIMES = 8;
+const LOOP_LENGTH = 24;
+/** Someone who says "no, no, no, no" may rightly be translated with a repeat. */
+const SPOKEN_REPEAT = /([\s\S]{1,32}?)\1{3,}/iu;
+
 /** Translates with a chat model on DeepInfra, through its OpenAI-compatible API. */
 export class DeepInfraTranslator implements Translator {
   private readonly options: DeepInfraTranslatorOptions;
@@ -33,7 +48,11 @@ export class DeepInfraTranslator implements Translator {
     const timeout = AbortSignal.timeout(this.options.timeoutMs ?? 30_000);
     const signal = request.signal ? AbortSignal.any([request.signal, timeout]) : timeout;
     try {
-      return await this.stream(request, signal);
+      let answer = await this.stream(request, signal);
+      // A model stuck repeating itself gets one more go, from the start.
+      if (answer.looped) answer = await this.stream(request, signal);
+      if (!answer.text) throw new TranslationError('The translation service kept repeating itself.');
+      return answer.text;
     } catch (error) {
       if (request.signal?.aborted || error instanceof TranslationError) throw error;
       if (timeout.aborted) throw new TranslationError('Translation took too long.', { cause: error });
@@ -41,7 +60,7 @@ export class DeepInfraTranslator implements Translator {
     }
   }
 
-  private async stream(request: TranslationRequest, signal: AbortSignal): Promise<string> {
+  private async stream(request: TranslationRequest, signal: AbortSignal): Promise<Answer> {
     const response = await fetch(`${this.options.baseUrl ?? DEEPINFRA_URL}/v1/openai/chat/completions`, {
       method: 'POST',
       headers: { authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json' },
@@ -62,6 +81,7 @@ export class DeepInfraTranslator implements Translator {
     if (!response.ok) throw await this.httpError(response);
     if (!response.body) throw new TranslationError('Translation failed.');
 
+    const repeated = SPOKEN_REPEAT.test(request.text);
     let text = '';
     for await (const data of eventData(response.body)) {
       if (data === '[DONE]') break;
@@ -74,6 +94,9 @@ export class DeepInfraTranslator implements Translator {
       const delta = choice?.delta?.content;
       if (typeof delta === 'string' && delta) {
         text += delta;
+        // Returning stops the download.
+        const loop = repeated ? -1 : loopStart(text);
+        if (loop >= 0) return { text: text.slice(0, loop).trim(), looped: true };
         request.onPartial?.(text);
       }
       if (choice?.finish_reason === 'content_filter') throw new TranslationRefusedError();
@@ -81,7 +104,7 @@ export class DeepInfraTranslator implements Translator {
 
     const translation = text.trim();
     if (!translation) throw new TranslationError('The translation service returned an empty translation.');
-    return translation;
+    return { text: translation, looped: false };
   }
 
   private async httpError(response: Response): Promise<TranslationError> {
@@ -123,6 +146,22 @@ async function* eventData(body: ReadableStream<Uint8Array>): AsyncGenerator<stri
   }
   buffer += decoder.decode();
   if (buffer.startsWith('data:')) yield buffer.slice(5).trim();
+}
+
+/** Where the end of `text` started saying one short piece over and over, or -1. */
+function loopStart(text: string): number {
+  for (let size = 1; size <= LOOP_PIECE; size++) {
+    const start = text.length - Math.max(size * LOOP_TIMES, LOOP_LENGTH);
+    if (start < 0) break;
+    // Each character from `start` on is the same as the one `size` further on.
+    if (text.slice(start + size) !== text.slice(start, -size)) continue;
+    // Not a run of dots or dashes.
+    if (!/\p{L}/u.test(text.slice(start, start + size))) continue;
+    let begin = start;
+    while (begin > 0 && text[begin - 1] === text[begin - 1 + size]) begin--;
+    return begin;
+  }
+  return -1;
 }
 
 function parseChunk(data: string): ChatChunk {

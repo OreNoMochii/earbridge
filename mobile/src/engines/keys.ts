@@ -14,7 +14,7 @@ import { conversationVoices, releaseVoiceModel } from './voices.ts';
 const DEEPGRAM_MODEL = 'nova-3';
 /** Covers languages nova-3 does not. */
 const DEEPGRAM_FALLBACK_MODEL = 'nova-2';
-const TRANSLATION_MODEL = 'google/gemma-4-31B-it-turbo';
+const TRANSLATION_MODEL = 'google/gemma-4-31B-it';
 
 const DEEPGRAM_KEY_HINT = 'Check your Deepgram key in Settings.';
 const DEEPINFRA_KEY_HINT = 'Check your DeepInfra key in Settings.';

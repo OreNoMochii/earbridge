@@ -1,6 +1,7 @@
 // Short messages near the top of a conversation; they go away by themselves.
 
 import { Text, View } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 
 import type { Toast } from '../live-session.ts';
 import { themedStyles, type } from '../theme.ts';
@@ -19,11 +20,12 @@ function toastIcon(message: string): IconName {
   return 'info';
 }
 
-export function Toasts({ toasts, top }: { toasts: readonly Toast[]; top: number }) {
+/** `style` places them. */
+export function Toasts({ toasts, style }: { toasts: readonly Toast[]; style: StyleProp<ViewStyle> }) {
   const { styles, palette } = useStyles();
   if (toasts.length === 0) return null;
   return (
-    <View style={[styles.toasts, { top }]}>
+    <View style={[styles.toasts, style]}>
       {toasts.slice(-3).map((toast) => (
         <View key={toast.id} style={styles.toast} accessible accessibilityRole="alert" accessibilityLiveRegion="polite">
           <Icon name={toastIcon(toast.message)} size={24} color={palette.toastText} />
@@ -37,8 +39,6 @@ export function Toasts({ toasts, top }: { toasts: readonly Toast[]; top: number 
 const useStyles = themedStyles((palette) => ({
   toasts: {
     position: 'absolute',
-    left: 16,
-    right: 16,
     zIndex: 10,
     gap: 8,
     pointerEvents: 'none',

@@ -34,14 +34,12 @@ export function useKeepInView(): KeepInView {
 
 interface ScreenProps {
   children: ReactNode;
-  /** The content fills the screen, so its last part sits at the bottom. */
-  fixed?: boolean;
   /** Stays at the bottom while the rest scrolls. */
   footer?: ReactNode;
   gap?: number;
 }
 
-export function Screen({ children, fixed = false, footer, gap = 24 }: ScreenProps) {
+export function Screen({ children, footer, gap = 20 }: ScreenProps) {
   const { styles } = useStyles();
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollView>(null);
@@ -97,9 +95,9 @@ export function Screen({ children, fixed = false, footer, gap = 24 }: ScreenProp
             // Made room for the keyboard.
             if (shorter) reveal();
           }}
-          contentContainerStyle={[styles.content, { paddingBottom: footer === undefined ? insets.bottom + 28 : 20 }]}
+          contentContainerStyle={[styles.content, { paddingBottom: footer === undefined ? insets.bottom + 16 : 12 }]}
         >
-          <View ref={column} style={[styles.column, { gap }, fixed && styles.fixed]}>
+          <View ref={column} style={[styles.column, { gap }]}>
             {children}
           </View>
         </ScrollView>
@@ -141,7 +139,7 @@ export function DownloadCard({ text }: { text: string }) {
     <View style={styles.download} accessible accessibilityLabel={text} accessibilityLiveRegion="polite">
       <View style={styles.downloadHead}>
         <Icon name="download" size={24} color={palette.accent} />
-        <Text style={styles.downloadText}>{text.replace(/\s*\d+%$/, '')}</Text>
+        <Text style={styles.downloadText}>{text}</Text>
       </View>
       {percent !== undefined && (
         <View style={styles.track}>
@@ -167,15 +165,9 @@ const useStyles = themedStyles((palette) => ({
     maxWidth: 560,
     alignSelf: 'center',
   },
-  fixed: {
-    flexGrow: 1,
-    justifyContent: 'space-between',
-  },
   footer: {
-    paddingTop: 16,
+    paddingTop: 12,
     paddingHorizontal: 20,
-    borderTopWidth: 2,
-    borderTopColor: palette.border,
     backgroundColor: palette.bg,
   },
   footerColumn: {
@@ -211,7 +203,7 @@ const useStyles = themedStyles((palette) => ({
   },
   download: {
     gap: 12,
-    padding: 16,
+    padding: 14,
     borderWidth: 2,
     borderColor: palette.border,
     borderRadius: 16,

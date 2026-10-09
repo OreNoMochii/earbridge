@@ -1,7 +1,8 @@
 // The running conversation: what each person said, in their language and translated.
 // It follows new lines unless the user has scrolled up to read.
 
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactElement } from 'react';
 import { FlatList, Text, View } from 'react-native';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 
@@ -52,11 +53,15 @@ interface FeedProps {
   interims: readonly Interim[];
   /** Shown until someone speaks. */
   placeholder: string;
+  /** Above the conversation, scrolling with it, e.g. who is in the group. */
+  header?: ReactElement | undefined;
+  /** Scrolls up to the header and keeps new lines from scrolling it away, e.g. while the invite shows. */
+  holdHeader?: boolean;
   /** Translate something that was skipped. */
   onTranslate(id: string): void;
 }
 
-export function Feed({ entries, interims, placeholder, onTranslate }: FeedProps) {
+export function Feed({ entries, interims, placeholder, header, holdHeader = false, onTranslate }: FeedProps) {
   const { styles, palette } = useStyles();
   const list = useRef<FlatList<Row>>(null);
   const following = useRef(true);
@@ -68,8 +73,14 @@ export function Feed({ entries, interims, placeholder, onTranslate }: FeedProps)
     following.current = contentSize.height - contentOffset.y - layoutMeasurement.height <= FOLLOW_WITHIN;
   }, []);
   const onContentSizeChange = useCallback(() => {
-    if (following.current) list.current?.scrollToEnd({ animated: true });
-  }, []);
+    if (following.current && !holdHeader) list.current?.scrollToEnd({ animated: true });
+  }, [holdHeader]);
+  // Up to the header as it opens; back to the latest lines once it closes.
+  useEffect(() => {
+    following.current = !holdHeader;
+    if (holdHeader) list.current?.scrollToOffset({ offset: 0, animated: true });
+    else list.current?.scrollToEnd({ animated: true });
+  }, [holdHeader]);
   const toggleRun = useCallback((run: string) => {
     setOpenRuns((current) => {
       const next = new Set(current);
@@ -95,14 +106,6 @@ export function Feed({ entries, interims, placeholder, onTranslate }: FeedProps)
     [onTranslate, toggleRun, styles.more],
   );
 
-  if (rows.length === 0 && interims.length === 0) {
-    return (
-      <View style={styles.empty}>
-        <Icon name="messages-square" size={36} color={palette.muted} />
-        <Text style={styles.emptyText}>{placeholder}</Text>
-      </View>
-    );
-  }
   return (
     <FlatList
       ref={list}
@@ -112,6 +115,16 @@ export function Feed({ entries, interims, placeholder, onTranslate }: FeedProps)
       keyExtractor={keyOf}
       renderItem={renderRow}
       ItemSeparatorComponent={Gap}
+      ListHeaderComponent={header}
+      ListHeaderComponentStyle={styles.header}
+      ListEmptyComponent={
+        interims.length === 0 ? (
+          <View style={styles.empty}>
+            <Icon name="messages-square" size={36} color={palette.muted} />
+            <Text style={styles.emptyText}>{placeholder}</Text>
+          </View>
+        ) : null
+      }
       ListFooterComponent={interims.length > 0 ? <Captions interims={interims} spaced={rows.length > 0} /> : null}
       onScroll={onScroll}
       scrollEventThrottle={100}
@@ -174,9 +187,17 @@ const Bubble = memo(function Bubble({ entry }: { entry: FeedEntry }) {
 const SKIP_REASONS: Readonly<Record<Exclude<SkipReason, 'language'>, string>> = {
   distant: 'far away',
   voice: 'another voice',
+  unrecorded: 'voice not recorded',
+  short: 'too short to tell',
+  untimed: 'voice not checked',
+  direction: 'from the side',
 };
 
-/** Something heard but not translated: too far away, another voice or another language. */
+/**
+ * Something heard but not translated: too far away, from the side, another voice or one not
+ * recorded, too short to tell whose, or another language. Not its words: only the two
+ * people's are shown.
+ */
 const Skipped = memo(function Skipped({ entry, onTranslate }: { entry: FeedEntry; onTranslate(id: string): void }) {
   const { styles, palette } = useStyles();
   const skipped = entry.skipped;
@@ -186,15 +207,12 @@ const Skipped = memo(function Skipped({ entry, onTranslate }: { entry: FeedEntry
   return (
     <View style={styles.skipped}>
       <Icon name={accepting ? 'languages' : 'ear-off'} size={22} color={palette.idle} />
-      <View style={styles.skippedTexts}>
-        <Text style={styles.skippedWhy}>{accepting ? 'Translating…' : `Not translated · ${why}`}</Text>
-        <Text style={styles.skippedWords}>{entry.text}</Text>
-      </View>
+      <Text style={styles.skippedWhy}>{accepting ? 'Translating…' : `Not translated · ${why}`}</Text>
       {skipped.state === 'skipped' && (
         <CompactButton
           label="Translate"
           icon="languages"
-          accessibilityLabel={`Translate “${entry.text}”`}
+          accessibilityLabel={`Translate it after all (${why})`}
           onPress={() => onTranslate(entry.id)}
         />
       )}
@@ -231,11 +249,14 @@ const useStyles = themedStyles((palette) => ({
   content: {
     paddingVertical: 4,
   },
+  header: {
+    gap: 16,
+    paddingBottom: 16,
+  },
   gap: {
-    height: 12,
+    height: 10,
   },
   empty: {
-    flex: 1,
     alignItems: 'center',
     gap: 12,
     padding: 24,
@@ -254,10 +275,10 @@ const useStyles = themedStyles((palette) => ({
     justifyContent: 'flex-end',
   },
   bubble: {
-    maxWidth: '86%',
-    gap: 6,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
+    width: '85%',
+    gap: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     borderWidth: 2,
   },
   bubbleTheirs: {
@@ -281,7 +302,7 @@ const useStyles = themedStyles((palette) => ({
     color: palette.muted,
   },
   first: {
-    ...type.large,
+    ...type.body,
     color: palette.text,
   },
   second: {
@@ -305,37 +326,29 @@ const useStyles = themedStyles((palette) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingTop: 12,
-    paddingRight: 12,
-    paddingBottom: 12,
-    paddingLeft: 16,
+    paddingTop: 10,
+    paddingRight: 10,
+    paddingBottom: 10,
+    paddingLeft: 14,
     borderRadius: 14,
     backgroundColor: palette.idleSoft,
   },
-  skippedTexts: {
-    flex: 1,
-    gap: 2,
-  },
   skippedWhy: {
     ...type.smallBold,
-    color: palette.idle,
-  },
-  skippedWords: {
-    ...type.secondary,
-    fontStyle: 'italic',
+    flex: 1,
     color: palette.idle,
   },
   captions: {
-    gap: 12,
+    gap: 10,
   },
   captionsSpaced: {
-    marginTop: 12,
+    marginTop: 10,
   },
   caption: {
-    maxWidth: '86%',
+    width: '85%',
     gap: 4,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     borderTopLeftRadius: 6,
     borderTopRightRadius: 20,
     borderBottomRightRadius: 20,

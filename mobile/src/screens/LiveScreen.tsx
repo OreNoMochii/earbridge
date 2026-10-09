@@ -2,7 +2,7 @@
 // translation for the other person, everything said so far, and the talk controls.
 
 import { useCallback, useState, useSyncExternalStore } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { SpeakerSelection } from '../../../shared/protocol.ts';
@@ -17,10 +17,12 @@ import { HoldButton } from '../components/HoldButton.tsx';
 import { Icon } from '../components/Icon.tsx';
 import { InvitePanel } from '../components/InvitePanel.tsx';
 import { LevelBars } from '../components/LevelBars.tsx';
+import { LoudHint } from '../components/LoudHint.tsx';
 import { PartnerPanel } from '../components/PartnerPanel.tsx';
 import { PersonChips } from '../components/PersonChips.tsx';
 import { DownloadCard } from '../components/Screen.tsx';
 import { Toasts } from '../components/Toasts.tsx';
+import { VoicesBar } from '../components/VoicesBar.tsx';
 import { nativeLanguageName, plainLanguageName } from '../language-names.ts';
 import type { LiveSession, LiveState } from '../live-session.ts';
 import { themedStyles, type } from '../theme.ts';
@@ -44,7 +46,7 @@ export function LiveScreen({ session }: { session: LiveSession }) {
   });
 
   const solo = session.mode === 'solo';
-  const hold = session.talkMode === 'hold';
+  const hold = state.talkMode === 'hold';
   const { status } = state;
   const downloading = status.tone === 'busy' && /ownloading/.test(status.text);
   const pill = downloading ? { text: 'Getting ready…', tone: status.tone } : status;
@@ -52,16 +54,26 @@ export function LiveScreen({ session }: { session: LiveSession }) {
   const placeholder = !solo
     ? 'When someone speaks, it appears here in their language and in yours.'
     : hold
-      ? 'Hold your button while you talk. Everything you both say appears here, translated.'
-      : 'Start talking. Everything you both say appears here, translated.';
+      ? 'Hold your button while you talk. The translation shows here.'
+      : 'Start talking. The translation shows here.';
 
-  const feed = (
-    <Feed entries={state.entries} interims={state.interims} placeholder={placeholder} onTranslate={(id) => session.accept(id)} />
-  );
+  // A group: the invite while it is open, and who is in the group, scroll with the conversation.
+  const { server } = session;
+  const invite =
+    !solo && state.inviteOpen && state.roomCode && server !== undefined ? (
+      <InvitePanel server={server} room={state.roomCode} onToast={(message) => session.toast(message)} />
+    ) : null;
+  const header =
+    !solo && (invite || state.participants.length > 0) ? (
+      <>
+        {invite}
+        <PersonChips participants={state.participants} />
+      </>
+    ) : undefined;
 
   return (
     <View style={[styles.screen, { paddingLeft: insets.left, paddingRight: insets.right }]}>
-      <View style={[styles.body, { paddingTop: insets.top + 12 }]}>
+      <View style={[styles.body, { paddingTop: insets.top + 8 }]}>
         {solo ? (
           <View style={styles.top}>
             <View style={styles.topText}>
@@ -74,7 +86,7 @@ export function LiveScreen({ session }: { session: LiveSession }) {
                 <Text style={styles.language} numberOfLines={1}>
                   {native(session.myLang)}
                 </Text>
-                <Icon name="arrow-left-right" size={22} color={palette.muted} />
+                <Icon name="arrow-left-right" size={18} color={palette.muted} />
                 <Text style={styles.language} numberOfLines={1}>
                   {native(session.theirLang)}
                 </Text>
@@ -107,7 +119,7 @@ export function LiveScreen({ session }: { session: LiveSession }) {
               <Status text={pill.text} tone={pill.tone} />
               <CompactButton
                 kind={state.inviteOpen ? 'active' : 'plain'}
-                label={state.inviteOpen ? 'Hide invite' : 'Invite'}
+                label="Invite"
                 icon="user-plus"
                 accessibilityLabel={state.inviteOpen ? 'Hide the invite' : 'Invite others'}
                 disabled={!state.roomCode}
@@ -117,34 +129,33 @@ export function LiveScreen({ session }: { session: LiveSession }) {
           </View>
         )}
 
+        {solo && state.voices && <VoicesBar session={session} voices={state.voices} />}
         {downloading && <DownloadCard text={status.text} />}
 
-        {solo ? (
-          <>
-            <PartnerPanel partner={state.partner} lang={session.theirLang} />
-            {feed}
-          </>
-        ) : state.inviteOpen && state.roomCode && session.server !== undefined ? (
-          <ScrollView style={styles.invite} contentContainerStyle={styles.inviteContent}>
-            <InvitePanel server={session.server} room={state.roomCode} onToast={(message) => session.toast(message)} />
-          </ScrollView>
-        ) : (
-          <>
-            <PersonChips participants={state.participants} />
-            {feed}
-          </>
-        )}
+        {solo && <PartnerPanel partner={state.partner} lang={session.theirLang} />}
+        <View style={styles.conversation}>
+          <Feed
+            entries={state.entries}
+            interims={state.interims}
+            placeholder={placeholder}
+            header={header}
+            holdHeader={invite !== null}
+            onTranslate={(id) => session.accept(id)}
+          />
+          {/* Over the conversation, clear of the End button and the text for them; low while the QR code shows. */}
+          <Toasts toasts={state.toasts} style={[styles.toasts, invite ? styles.toastsLow : styles.toastsHigh]} />
+        </View>
+        {/* Next to the controls it changes. */}
+        {solo && state.loud && <LoudHint onHold={() => session.holdToTalk()} onClose={() => session.dismissLoud()} />}
       </View>
 
-      <View style={[styles.panel, { paddingBottom: insets.bottom + 28 }]}>
+      <View style={[styles.panel, { paddingBottom: insets.bottom + 12 }]}>
         {solo ? (
           <SoloControls session={session} state={state} subscribeLevel={subscribeLevel} />
         ) : (
           <GroupControls session={session} state={state} subscribeLevel={subscribeLevel} />
         )}
       </View>
-
-      <Toasts toasts={state.toasts} top={insets.top + 12} />
 
       <ConfirmDialog
         visible={confirming}
@@ -182,10 +193,32 @@ function MicRow({ state, subscribeLevel }: Omit<ControlsProps, 'session'>) {
   return (
     <View style={styles.micRow}>
       <Icon name={state.muted ? 'mic-off' : 'mic'} size={22} color={palette.muted} />
-      <Text style={styles.micLabel} numberOfLines={1}>
+      <Text style={[styles.micLabel, styles.micName]} numberOfLines={1}>
         {state.micLabel}
       </Text>
       <LevelBars subscribe={subscribeLevel} mode={state.micMode} />
+    </View>
+  );
+}
+
+/** The microphone with its level, and the button that pauses it. */
+function MicAndPause({ session, state, subscribeLevel }: ControlsProps) {
+  const { styles, palette } = useStyles();
+  return (
+    <View style={styles.micAndPause}>
+      <Icon name={state.muted ? 'mic-off' : 'mic'} size={24} color={palette.muted} />
+      <View style={styles.mic}>
+        <Text style={styles.micLabel} numberOfLines={2}>
+          {state.micLabel}
+        </Text>
+        <LevelBars subscribe={subscribeLevel} mode={state.micMode} />
+      </View>
+      <Button
+        label={state.muted ? 'Resume' : 'Pause'}
+        icon={state.muted ? 'play' : 'pause'}
+        accessibilityLabel={state.muted ? 'Resume listening' : 'Pause listening'}
+        onPress={() => session.setMuted(!state.muted)}
+      />
     </View>
   );
 }
@@ -195,19 +228,20 @@ function SoloControls({ session, state, subscribeLevel }: ControlsProps) {
   const { styles } = useStyles();
   const { myLang, theirLang } = session;
 
-  if (session.talkMode === 'hold') {
+  if (state.talkMode === 'hold') {
     return (
       <>
         <MicRow state={state} subscribeLevel={subscribeLevel} />
-        <Text style={styles.hint}>Hold a button to talk. Let go when you’re done.</Text>
         <View style={styles.holdRow}>
           <HoldButton
-            detail={`Me · ${native(myLang)}`}
+            who="Me"
+            language={native(myLang)}
             pressed={state.holding === 'me'}
             onChange={(pressed) => session.setHolding('me', pressed)}
           />
           <HoldButton
-            detail={`Them · ${native(theirLang)}`}
+            who="Them"
+            language={native(theirLang)}
             pressed={state.holding === 'them'}
             onChange={(pressed) => session.setHolding('them', pressed)}
           />
@@ -223,7 +257,6 @@ function SoloControls({ session, state, subscribeLevel }: ControlsProps) {
   ];
   return (
     <>
-      <MicRow state={state} subscribeLevel={subscribeLevel} />
       <Segments<SpeakerSelection>
         look="question"
         label="Who is talking?"
@@ -231,30 +264,23 @@ function SoloControls({ session, state, subscribeLevel }: ControlsProps) {
         value={state.speaker}
         onChange={(speaker) => session.selectSpeaker(speaker)}
       />
-      <Text style={styles.hint}>
-        {state.autoDetect ? 'Who is talking is noticed automatically.' : 'Tap Me or Them to show who is talking.'}
-      </Text>
-      <Button
-        label={state.muted ? 'Resume' : 'Pause'}
-        icon={state.muted ? 'play' : 'pause'}
-        accessibilityLabel={state.muted ? 'Resume listening' : 'Pause listening'}
-        onPress={() => session.setMuted(!state.muted)}
-      />
+      <MicAndPause session={session} state={state} subscribeLevel={subscribeLevel} />
     </>
   );
 }
 
 /** A group: the microphone and pause, or one button to hold. */
 function GroupControls({ session, state, subscribeLevel }: ControlsProps) {
-  const { styles, palette } = useStyles();
+  const { styles } = useStyles();
 
-  if (session.talkMode === 'hold') {
+  if (state.talkMode === 'hold') {
     return (
       <>
         <MicRow state={state} subscribeLevel={subscribeLevel} />
         <View style={styles.holdRow}>
           <HoldButton
-            detail={`Me · ${native(session.myLang)}`}
+            who="Me"
+            language={native(session.myLang)}
             pressed={state.holding === 'room'}
             onChange={(pressed) => session.setHolding('room', pressed)}
           />
@@ -263,23 +289,7 @@ function GroupControls({ session, state, subscribeLevel }: ControlsProps) {
     );
   }
 
-  return (
-    <View style={styles.groupControls}>
-      <Icon name={state.muted ? 'mic-off' : 'mic'} size={24} color={palette.muted} />
-      <View style={styles.groupMic}>
-        <Text style={styles.micLabel} numberOfLines={1}>
-          {state.micLabel}
-        </Text>
-        <LevelBars subscribe={subscribeLevel} mode={state.micMode} />
-      </View>
-      <Button
-        label={state.muted ? 'Resume' : 'Pause'}
-        icon={state.muted ? 'play' : 'pause'}
-        accessibilityLabel={state.muted ? 'Resume listening' : 'Pause listening'}
-        onPress={() => session.setMuted(!state.muted)}
-      />
-    </View>
-  );
+  return <MicAndPause session={session} state={state} subscribeLevel={subscribeLevel} />;
 }
 
 const useStyles = themedStyles((palette) => ({
@@ -289,13 +299,27 @@ const useStyles = themedStyles((palette) => ({
   },
   body: {
     flex: 1,
-    gap: 16,
+    gap: 10,
     paddingHorizontal: 20,
-    paddingBottom: 12,
+    paddingBottom: 10,
+  },
+  conversation: {
+    flex: 1,
+  },
+  toasts: {
+    // 16 from the edges of the screen, past the body's 20.
+    left: -4,
+    right: -4,
+  },
+  toastsHigh: {
+    top: 8,
+  },
+  toastsLow: {
+    bottom: 8,
   },
   top: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 12,
   },
   topText: {
@@ -329,15 +353,9 @@ const useStyles = themedStyles((palette) => ({
     flexShrink: 1,
     color: palette.text,
   },
-  invite: {
-    flex: 1,
-  },
-  inviteContent: {
-    paddingBottom: 12,
-  },
   panel: {
-    gap: 14,
-    paddingTop: 16,
+    gap: 10,
+    paddingTop: 10,
     paddingHorizontal: 20,
     borderTopWidth: 2,
     borderTopColor: palette.border,
@@ -353,21 +371,21 @@ const useStyles = themedStyles((palette) => ({
     flexShrink: 1,
     color: palette.muted,
   },
-  hint: {
-    ...type.secondary,
-    color: palette.muted,
+  /** In a row, with the level at the end. */
+  micName: {
+    flex: 1,
   },
   holdRow: {
     flexDirection: 'row',
     gap: 12,
   },
-  groupControls: {
+  micAndPause: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
-  groupMic: {
+  mic: {
     flex: 1,
-    gap: 6,
+    gap: 4,
   },
 }));

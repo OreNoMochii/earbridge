@@ -68,6 +68,139 @@ export function speechLevel(samples: Int16Array): number | undefined {
   return levels[Math.floor(levels.length * 0.3)];
 }
 
+/** A stretch of the conversation, in seconds on its clock. */
+export interface Span {
+  start: number;
+  end: number;
+}
+
+/** How far some speech stood above the place's background, in dB. */
+export interface Margin {
+  db: number;
+  /** Measured from its words, timed by the recognizer, not from the loudest of the last seconds. */
+  timed: boolean;
+}
+
+/** 100 ms: the pieces of audio how loud the place is gets measured in. */
+const PIECE = AUDIO_SAMPLE_RATE / 10;
+const PIECES_PER_SECOND = AUDIO_SAMPLE_RATE / PIECE;
+/** Quieter than any place: the phone muting its microphone while it speaks. */
+const DIGITAL_SILENCE_DB = -90;
+/** The last half minute tells how loud the place is, once 10 s of it were heard. */
+const PLACE_PIECES = 300;
+const MIN_PLACE_PIECES = 100;
+const MIN_SPEECH_PIECES = 5;
+/** Without word timings, the speech is the loudest of the last 8 s. */
+const RECENT_PIECES = 80;
+/**
+ * How far above the place the two people's speech must stand for the noisy-place filters
+ * to tell them from the others: with chatter closer to their voices than that, voice prints
+ * miss more than a tenth of what they say. Measured from the loudest of the last seconds,
+ * speech stands about 1 dB higher.
+ */
+const ENOUGH_DB = 8;
+const ENOUGH_UNTIMED_DB = 9;
+/** How many of the latest utterances count, of one side (or of both, without word timings). */
+const JUDGED = 4;
+
+/**
+ * How loud the place is, against how loud the two people at the phone sound. Once their
+ * speech barely stands out of the chatter around, no filter can tell them from the others,
+ * and the recognizer gets their words wrong: holding a button to talk works better.
+ */
+export class NoisyPlace {
+  /** How loud each 100 ms of the last half minute or so was, in dB below full scale. */
+  private pieces: number[] = [];
+  /** The number of the first piece kept. */
+  private first = 0;
+  /** The piece being filled: its sum of squares, and how many samples it has. */
+  private sum = 0;
+  private filled = 0;
+  private samples = 0;
+  /** How far above what they need the latest utterances stood, by side ('' without word timings). */
+  private readonly latest = new Map<string, number[]>();
+
+  /** Seconds of audio so far: the conversation's clock. */
+  get now(): number {
+    return this.samples / AUDIO_SAMPLE_RATE;
+  }
+
+  /** Some 16 kHz mono PCM16. */
+  append(pcm: Uint8Array): void {
+    const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+    for (let i = 0; i + 2 <= pcm.byteLength; i += 2) {
+      const sample = view.getInt16(i, true);
+      this.sum += sample * sample;
+      if (++this.filled === PIECE) {
+        this.pieces.push(Math.max(SILENCE_DB, 10 * Math.log10(this.sum / PIECE / 32768 ** 2)));
+        this.sum = 0;
+        this.filled = 0;
+      }
+    }
+    this.samples += pcm.byteLength >> 1;
+    if (this.pieces.length >= 2 * PLACE_PIECES) {
+      this.first += this.pieces.length - PLACE_PIECES;
+      this.pieces = this.pieces.slice(-PLACE_PIECES);
+    }
+  }
+
+  /**
+   * How far above the place's background the speech in `span` stands: the level the
+   * loudest 30% of its pieces reach. Without a span, the loudest of the last seconds
+   * count. Undefined until there is enough to tell.
+   */
+  margin(span: Span | undefined): Margin | undefined {
+    const background = this.background();
+    if (background === undefined) return undefined;
+    if (span) {
+      const from = Math.max(0, Math.floor(span.start * PIECES_PER_SECOND) - this.first);
+      const to = Math.floor(span.end * PIECES_PER_SECOND) + 1 - this.first;
+      const speech = heard(this.pieces.slice(from, Math.max(from, to))).sort((a, b) => a - b);
+      if (speech.length < MIN_SPEECH_PIECES) return undefined;
+      return { db: speech[Math.floor(speech.length * 0.7)]! - background, timed: true };
+    }
+    const recent = heard(this.pieces.slice(-RECENT_PIECES)).sort((a, b) => b - a);
+    if (recent.length < MIN_SPEECH_PIECES) return undefined;
+    return { db: recent[Math.floor(recent.length * 0.15)]! - background, timed: false };
+  }
+
+  /** Remembers how far above the place something one side said stood. */
+  hear(side: string, margin: Margin): void {
+    const key = margin.timed ? side : '';
+    const above = margin.db - (margin.timed ? ENOUGH_DB : ENOUGH_UNTIMED_DB);
+    this.latest.set(key, [...(this.latest.get(key) ?? []), above].slice(-JUDGED));
+  }
+
+  /**
+   * Whether the two people barely stand out of the place: the latest utterances of one of
+   * them (of both, without word timings) stood, by their median, less far above it than
+   * the filters need.
+   */
+  get tooLoud(): boolean {
+    for (const above of this.latest.values()) {
+      if (above.length === JUDGED && median(above) < 0) return true;
+    }
+    return false;
+  }
+
+  /** The level the quietest tenth of the last half minute stayed under, digital silence aside. */
+  private background(): number | undefined {
+    const place = heard(this.pieces.slice(-PLACE_PIECES)).sort((a, b) => a - b);
+    return place.length < MIN_PLACE_PIECES ? undefined : place[Math.floor(place.length * 0.1)];
+  }
+}
+
+/** Levels of pieces with something in them, not the microphone muted. */
+function heard(levels: number[]): number[] {
+  return levels.filter((level) => level > DIGITAL_SILENCE_DB);
+}
+
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
 /** How much quieter than usual a side may sound, in dB: about four times as far from the phone. */
 const MARGIN_DB = 12;
 /** The same, compared with the other side, until this one has spoken a few times. */

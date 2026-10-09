@@ -58,6 +58,8 @@ export class DeepgramProvider implements SttProvider {
 }
 
 interface DeepgramWord {
+  word?: string;
+  punctuated_word?: string;
   language?: string;
   /** Seconds since the start of the connection's audio. */
   start?: number;
@@ -252,6 +254,12 @@ class DeepgramStream implements SttStream {
       const offset = this.origin / BYTES_PER_SECOND;
       result.start = offset + Math.min(...starts);
       result.end = offset + Math.max(...ends);
+      result.words = words.flatMap((word) => {
+        const text = word.punctuated_word ?? word.word;
+        if (typeof text !== 'string' || !isNumber(word.start) || !isNumber(word.end)) return [];
+        const language = typeof word.language === 'string' ? baseLanguage(word.language) : undefined;
+        return [{ text, start: offset + word.start, end: offset + word.end, ...(language !== undefined && { language }) }];
+      });
     }
     this.events.onResult(result);
   }

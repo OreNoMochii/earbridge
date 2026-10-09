@@ -2,7 +2,7 @@
 // and where translations are heard, the computer's address, and why a conversation stopped.
 
 import { useEffect, useEffectEvent } from 'react';
-import type { Ref } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { BackHandler, Linking, View } from 'react-native';
 import type { TextInput } from 'react-native';
 
@@ -51,56 +51,69 @@ export function whoIsTalking(settings: AppSettings): string {
   return 'Tap Me or Them to show who is talking.';
 }
 
-/** On this phone, online with the user's own accounts, or through a computer. */
-export function EngineCards({ settings, onChange }: { settings: AppSettings; onChange: Update }) {
+interface CardsProps {
+  settings: AppSettings;
+  onChange: Update;
+  /** The first-time setup: the cards are a bit further apart, and say a bit more. */
+  wizard?: boolean;
+}
+
+/**
+ * On this phone, online with the user's own accounts, or through a computer. What the
+ * chosen one needs, like the keys, shows right under it.
+ */
+export function EngineCards({ settings, onChange, wizard = false, details }: CardsProps & { details?: ReactNode }) {
   const local = localSupport();
   const taiwan = settings.myLang === 'zh-TW' || settings.theirLang === 'zh-TW';
   return (
-    <View style={{ gap: 14 }} accessibilityRole="radiogroup">
+    <View style={{ gap: wizard ? 14 : 12 }} accessibilityRole="radiogroup">
       <ChoiceCard
         icon="smartphone"
         title="On this phone"
         badge={local.available ? 'Recommended' : undefined}
-        description="Free and private. Works without internet after a one-time download for each language."
+        description="Free and private. Works offline after a download."
         note={taiwan ? 'For Chinese (Taiwan): translated into simplified characters.' : undefined}
         reason={local.available ? undefined : local.reason}
         disabled={!local.available}
         selected={settings.engine === 'local'}
         onPress={() => onChange({ engine: 'local' })}
       />
+      {settings.engine === 'local' && details}
       <ChoiceCard
         icon="cloud"
         title="Online, best quality"
-        description="Uses your own Deepgram and DeepInfra accounts. They charge for what you use. A family member can set this up."
+        description="Your own Deepgram and DeepInfra accounts, paid per use."
         selected={settings.engine === 'keys'}
         onPress={() => onChange({ engine: 'keys' })}
       />
+      {settings.engine === 'keys' && details}
       <ChoiceCard
         icon="monitor"
         title="Through a computer"
-        description="A computer at home or at work runs Alo for you."
+        description="A computer at home or work runs Alo."
         selected={settings.engine === 'server'}
         onPress={() => onChange({ engine: 'server' })}
       />
+      {settings.engine === 'server' && details}
     </View>
   );
 }
 
 /** In the earphones, or out loud on the phone. */
-export function OutputCards({ settings, onChange }: { settings: AppSettings; onChange: Update }) {
+export function OutputCards({ settings, onChange, wizard = false }: CardsProps) {
   return (
-    <View style={{ gap: 14 }} accessibilityRole="radiogroup">
+    <View style={{ gap: wizard ? 14 : 12 }} accessibilityRole="radiogroup">
       <ChoiceCard
         icon="headphones"
         title="In my earphones"
-        description="Only you hear them. The other person reads your words on the screen."
+        description="You hear them. They read your words on the screen."
         selected={settings.output === 'earphones'}
         onPress={() => onChange({ output: 'earphones' })}
       />
       <ChoiceCard
         icon="volume-2"
         title="Out loud on the phone"
-        description="Everyone nearby hears them. The phone stops listening while it talks."
+        description="The phone speaks both translations aloud."
         selected={settings.output === 'speaker'}
         onPress={() => onChange({ output: 'speaker' })}
       />
@@ -129,7 +142,6 @@ export function ServerFields({ settings, onChange, addressLabel, error, onEdit, 
       <TextField
         ref={serverRef}
         label={addressLabel}
-        icon="monitor"
         error={error}
         value={settings.server}
         onChangeText={(server) => {
@@ -151,7 +163,6 @@ export function ServerFields({ settings, onChange, addressLabel, error, onEdit, 
         ref={tokenRef}
         label="Access code"
         hint="Only if you were given one."
-        icon="lock"
         value={settings.token}
         onChangeText={(token) => {
           onEdit?.();
@@ -218,6 +229,6 @@ export function EndBanner({ reason, onRetry, onKeys, onAccessCode }: EndBannerPr
     case 'room_not_found':
       return <Banner icon="users" title="Group not found" message="Check the code, or start a new group." />;
     default:
-      return <Banner icon="circle-alert" title="The conversation stopped" message={message} action={retry} />;
+      return <Banner icon="triangle-alert" title="The conversation stopped" message={message} action={retry} />;
   }
 }

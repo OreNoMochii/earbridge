@@ -2,7 +2,9 @@
 // SoloConversation the server runs, with engines the phone reaches on its own. It
 // answers in the server's messages, so the rest of the app cannot tell the difference.
 
+import type { Spatial } from '../../../shared/pipeline/direction.ts';
 import { consoleLogger } from '../../../shared/pipeline/log.ts';
+import type { TalkReporter } from '../../../shared/pipeline/report.ts';
 import { SoloConversation } from '../../../shared/pipeline/solo.ts';
 import type { SttProvider } from '../../../shared/pipeline/stt/types.ts';
 import type { Translator } from '../../../shared/pipeline/translate/types.ts';
@@ -32,6 +34,10 @@ export interface InAppOptions extends BackendEvents {
   theirLang: string;
   /** Skip speech much quieter than the two people at the phone. */
   nearbyOnly: boolean;
+  /** Skip speech from the phone's sides, when the microphone tells which way it came from. */
+  ignoreSides: boolean;
+  /** Told of each line heard and why it was skipped, for a talk report (test builds only). */
+  report?: TalkReporter;
   /**
    * Gets the engines ready, e.g. downloads what is missing, reporting what it is doing.
    * Rejects with an error whose message can be shown.
@@ -66,11 +72,25 @@ export class InAppBackend implements Backend {
       solo.flush();
     } else if (message.type === 'accept') {
       solo.accept(message.id);
+    } else if (message.type === 'record-voice') {
+      solo.recordPartner();
+    } else if (message.type === 'stop-recording') {
+      solo.stopRecording();
+    } else if (message.type === 'talk-mode') {
+      solo.setTalkMode(message.mode);
     }
   }
 
-  sendAudio(pcm: ArrayBuffer): void {
-    this.solo?.sendAudio(new Uint8Array(pcm));
+  sendAudio(pcm: ArrayBuffer, spatial?: Spatial): void {
+    this.solo?.sendAudio(new Uint8Array(pcm), spatial);
+  }
+
+  usePartnerVoice(print: Float32Array): boolean {
+    return this.solo?.usePartner(print) ?? false;
+  }
+
+  partnerVoice(): Float32Array | undefined {
+    return this.solo?.partnerPrint;
   }
 
   stop(): void {
@@ -113,8 +133,10 @@ export class InAppBackend implements Backend {
       log: consoleLogger,
       newId: () => `u${++this.lastId}`,
       nearbyOnly: options.nearbyOnly && pipeline.wordTimings !== false,
+      directions: options.ignoreSides && pipeline.wordTimings !== false,
       ...(pipeline.autoDetect === undefined ? {} : { autoDetect: pipeline.autoDetect }),
       ...(pipeline.voices && pipeline.wordTimings !== false ? { voices: pipeline.voices } : {}),
+      ...(options.report && { report: options.report }),
     });
     this.solo = solo;
     this.emit({

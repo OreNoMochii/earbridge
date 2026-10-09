@@ -32,8 +32,7 @@ export class PhoneVoice {
     if (!voice && voices.length > 0) {
       this.warn(
         `voice:${baseLanguage(lang)}`,
-        `No ${languageName(lang)} voice is installed on this device, so it may sound wrong. ` +
-          'You can add voices in the phone’s text-to-speech settings.',
+        `No ${languageName(lang)} voice on this phone. Add one in its text-to-speech settings.`,
       );
     }
     const cjk = CJK.has(baseLanguage(lang));

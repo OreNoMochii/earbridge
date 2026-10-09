@@ -16,7 +16,7 @@ interface TextFieldProps extends Omit<TextInputProps, 'style' | 'ref'> {
   hint?: string | undefined;
   error?: string | undefined;
   icon?: IconName | undefined;
-  /** A slightly larger label, for fields that stand alone on a screen. */
+  /** A slightly larger label, a bit further from the box, for fields that stand alone on a screen. */
   large?: boolean;
   ref?: Ref<TextInput>;
   /** Under the field, e.g. buttons that act on it. */
@@ -29,7 +29,7 @@ export function TextField({ label, hint, error, icon, large, ref, children, onFo
   const field = useRef<View>(null);
   const keepInView = useKeepInView();
   return (
-    <View ref={field} style={styles.field}>
+    <View ref={field} style={[styles.field, large && styles.fieldLarge]}>
       <Text style={[styles.label, large && styles.labelLarge]}>{label}</Text>
       <View style={[styles.box, focused && styles.boxFocused, error !== undefined && styles.boxError]}>
         {icon && <Icon name={icon} size={24} color={palette.muted} />}
@@ -73,7 +73,7 @@ export function SelectField({ label, value, onPress }: { label: string; value: s
         style={({ pressed }) => [styles.box, pressed && styles.pressed]}
       >
         <Text style={styles.value}>{value}</Text>
-        <Icon name="chevron-down" size={26} color={palette.text} />
+        <Icon name="chevron-down" size={24} color={palette.muted} />
       </Pressable>
     </View>
   );
@@ -82,6 +82,9 @@ export function SelectField({ label, value, onPress }: { label: string; value: s
 const useStyles = themedStyles((palette) => ({
   field: {
     gap: 8,
+  },
+  fieldLarge: {
+    gap: 10,
   },
   label: {
     ...type.compact,
@@ -95,19 +98,19 @@ const useStyles = themedStyles((palette) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderWidth: 2,
     borderColor: palette.borderStrong,
     borderRadius: 14,
     backgroundColor: palette.surface,
   },
   boxFocused: {
-    paddingHorizontal: 15,
+    paddingHorizontal: 13,
     borderWidth: 3,
     borderColor: palette.accent,
   },
   boxError: {
-    paddingHorizontal: 15,
+    paddingHorizontal: 13,
     borderWidth: 3,
     borderColor: palette.danger,
   },

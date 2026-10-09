@@ -11,25 +11,37 @@ import { voiceLanguages } from '../../client/src/settings.ts';
 import { OrderedSpeechQueue } from '../../client/src/speech-queue.ts';
 import type { SpeechItem } from '../../client/src/speech-queue.ts';
 import { canAutoDetect, sameLanguage } from '../../shared/languages.ts';
-import { SKIPPED_KEPT, SOLO_ME } from '../../shared/protocol.ts';
-import type { ClientMessage, Participant, ServerMessage, SkipReason, SpeakerSelection } from '../../shared/protocol.ts';
+import { SKIPPED_KEPT, SOLO_ME, SOLO_THEM } from '../../shared/protocol.ts';
+import type {
+  ClientMessage,
+  Participant,
+  PartnerVoice,
+  RecordingProblem,
+  ServerMessage,
+  SkipReason,
+  SpeakerSelection,
+} from '../../shared/protocol.ts';
 import { formatRoomCode } from '../../shared/room-code.ts';
 import EarbridgeAudio from '../modules/earbridge-audio/src/EarbridgeAudioModule.ts';
-import type { CaptureInput } from '../modules/earbridge-audio/src/EarbridgeAudioModule.ts';
-import { wantsEarphoneMic } from './app-settings.ts';
+import type { CaptureInput, IsolationEvent } from '../modules/earbridge-audio/src/EarbridgeAudioModule.ts';
+import { appFilters, wantsEarphoneMic } from './app-settings.ts';
 import type { AppSettings } from './app-settings.ts';
 import { earphonesConnected, watchEarphones } from './audio/earphones.ts';
 import { MicrophoneError, openMicrophone } from './audio/mic.ts';
-import type { MicMode, Microphone } from './audio/mic.ts';
+import type { KeptVoices, MicMode, Microphone } from './audio/mic.ts';
 import { PhoneVoice } from './audio/phone-voice.ts';
 import { VoicePlayer } from './audio/voice-player.ts';
 import { Connection } from './connection.ts';
 import type { ConnectionState, EndReason } from './connection.ts';
 import type { Backend, BackendEvents } from './engines/backend.ts';
 import { InAppBackend } from './engines/in-app-backend.ts';
+import { openTalkReport } from './engines/talk-report.ts';
+import type { TalkReport } from './engines/talk-report.ts';
 import type { InAppOptions } from './engines/in-app-backend.ts';
 import { prepareKeys } from './engines/keys.ts';
 import { prepareLocal } from './engines/local.ts';
+import { VOICE_MODEL_FILE, listPeople, loadMyVoice, readPersonVoice, savePerson } from './engines/voices.ts';
+import type { SavedPerson } from './engines/voices.ts';
 import { plainLanguageName } from './language-names.ts';
 import { serverLabel, socketUrl } from './server-url.ts';
 
@@ -104,6 +116,27 @@ export interface PartnerView {
   state: 'waiting' | 'streaming' | 'done' | 'failed';
 }
 
+/** One phone, while only the two people's voices are translated: how they are known. */
+export interface VoicesView {
+  /** How the other person's voice is known (mine always is, from Settings). */
+  partner: PartnerVoice;
+  /**
+   * While their voice is being recorded: `seconds` of it so far, of the `of` seconds
+   * needed (0 when not known yet), and maybe a `hint` of what is going wrong.
+   */
+  recording: { seconds: number; of: number; hint: RecordingProblem | undefined } | undefined;
+  /** Why the last recording of their voice did not work, until put away. */
+  failed: RecordingProblem | undefined;
+  /** The offer to record their voice was put away. */
+  dismissed: boolean;
+  /** Who they are, when their voice is one saved on the phone. */
+  name: string | undefined;
+  /** Their voice was just recorded: offer to save it for the next talks. */
+  offerSave: boolean;
+  /** People whose voices are saved on the phone, to choose instead of recording. */
+  people: SavedPerson[];
+}
+
 export interface LiveState {
   status: { text: string; tone: StatusTone };
   micMode: MicMode;
@@ -121,6 +154,12 @@ export interface LiveState {
   roomCode: string | undefined;
   inviteOpen: boolean;
   participants: readonly ParticipantView[];
+  /** One phone, while only the two people's voices are translated: how they are known. */
+  voices: VoicesView | undefined;
+  /** Whether people hold a button while they talk; it can change to that during the conversation. */
+  talkMode: AppSettings['talkMode'];
+  /** One phone: too loud here for the filters, so holding a button would work better. Until put away. */
+  loud: boolean;
 }
 
 type ReadyMessage = Extract<ServerMessage, { type: 'ready' }>;
@@ -129,6 +168,7 @@ type UtteranceMessage = Extract<ServerMessage, { type: 'utterance' }>;
 type SkippedMessage = Extract<ServerMessage, { type: 'skipped' }>;
 type TranslationMessage = Extract<ServerMessage, { type: 'translation' }>;
 type SpeechMessage = Extract<ServerMessage, { type: 'speech' }>;
+type VoicesMessage = Extract<ServerMessage, { type: 'voices' }>;
 
 export interface LiveSessionOptions {
   settings: AppSettings;
@@ -144,6 +184,8 @@ export interface LiveSessionOptions {
    * room it was in, if any, so it can be offered again after an error.
    */
   onEnded(reason: EndReason | undefined, room: string | undefined): void;
+  /** The way to talk was changed during the conversation, to keep for the next ones. */
+  onTalkModeChange?(talkMode: AppSettings['talkMode']): void;
 }
 
 let nextToastId = 1;
@@ -159,6 +201,13 @@ export class LiveSession {
   private readonly levelListeners = new Set<(level: number) => void>();
   private mic: Microphone | undefined;
   private backend: Backend | undefined;
+  /** What this talk's lines were and why they were skipped, in builds that keep one. */
+  private report: TalkReport | undefined;
+  /** My voice print, when the microphone may keep only our voices (see updateIsolation). */
+  private myPrint: Float32Array | undefined;
+  /** The microphone keeps only our voices, as asked. */
+  private isolating = false;
+  private toldSeparating = false;
   private connectionState: ConnectionState = 'connecting';
   /** What the engine is getting ready, e.g. a language download. */
   private progress: string | undefined;
@@ -219,6 +268,9 @@ export class LiveSession {
       roomCode: undefined,
       inviteOpen: false,
       participants: [],
+      voices: undefined,
+      talkMode: settings.talkMode,
+      loud: false,
     };
     this.queue = new OrderedSpeechQueue({
       speak: (item) => this.speak(item),
@@ -247,10 +299,6 @@ export class LiveSession {
 
   get mode(): AppSettings['mode'] {
     return this.settings.mode;
-  }
-
-  get talkMode(): AppSettings['talkMode'] {
-    return this.settings.talkMode;
   }
 
   get myLang(): string {
@@ -294,11 +342,17 @@ export class LiveSession {
     try {
       mic = await openMicrophone({
         earphoneMic: wantsEarphoneMic(settings),
-        onAudio: (pcm) => this.backend?.sendAudio(pcm),
+        // Only the phone's own filters use them.
+        directions: this.options.server === undefined && appFilters(settings.engine) && settings.ignoreSides,
+        onAudio: (pcm, spatial) => this.backend?.sendAudio(pcm, spatial),
         onLevel: (level) => {
           for (const listener of this.levelListeners) listener(level);
         },
         onEnded: (message) => this.end({ message: `${message} Start again to continue.` }),
+        // The turn is over: have what was just said transcribed and translated now.
+        onTurnEnd: () => this.backend?.send({ type: 'flush' }),
+        onSeparation: (event) => this.report?.note({ type: 'separation', ...event }),
+        onIsolation: (event) => this.onIsolation(event),
       });
     } catch (error) {
       this.end(
@@ -313,17 +367,19 @@ export class LiveSession {
       return;
     }
     this.mic = mic;
+    this.report?.note({ type: 'mic', input: mic.input });
     this.update({ micLabel: micLabel(mic.input) });
     if (wantsEarphoneMic(settings) && this.earphones && mic.input.input === 'phone') {
-      this.toast('The earphones’ microphone isn’t available, so the phone’s microphone listens.');
+      this.toast('Listening with the phone’s microphone.');
     }
     if (settings.output === 'earphones' && !this.earphones) {
-      this.toast('No earphones are connected, so translations play on the phone speaker. The microphone pauses while it speaks.');
+      this.toast('No earphones · using the phone speaker.');
     }
     this.updateMic();
     await this.keepRunningInBackground();
     if (this.ended) return;
 
+    if (this.separatesVoices()) this.myPrint = loadMyVoice();
     this.backend = this.createBackend();
     this.backend.start();
   }
@@ -347,11 +403,15 @@ export class LiveSession {
       settings.engine === 'local'
         ? (signal, progress) => prepareLocal(settings, signal, progress)
         : (signal, progress) => prepareKeys(settings, signal, progress);
+    const report = openTalkReport(settings);
+    this.report = report;
     return new InAppBackend({
       myLang: settings.myLang,
       theirLang: settings.theirLang,
       nearbyOnly: settings.nearbyOnly,
+      ignoreSides: settings.ignoreSides,
       prepare,
+      ...(report && { report: (entry) => report.note(entry) }),
       ...events,
     });
   }
@@ -359,12 +419,14 @@ export class LiveSession {
   /** The user ended the conversation. */
   stop(): void {
     if (this.ended) return;
+    this.report?.note({ type: 'end' });
     this.shutDown();
     this.options.onEnded(undefined, undefined);
   }
 
   private end(reason: EndReason): void {
     if (this.ended) return;
+    this.report?.note({ type: 'end', reason: reason.message });
     this.shutDown();
     this.options.onEnded(reason, this.state.roomCode ?? this.options.room);
   }
@@ -458,6 +520,13 @@ export class LiveSession {
       case 'speech':
         this.onSpeech(message);
         break;
+      case 'voices':
+        this.onVoices(message);
+        break;
+      case 'loud':
+        // Unless a button is held to talk already.
+        if (this.state.talkMode === 'handsfree') this.update({ loud: true });
+        break;
       case 'status':
         // "connecting" also follows every switch of speaker, which is not worth
         // announcing; only the first one counts (see onReady).
@@ -482,6 +551,8 @@ export class LiveSession {
       this.update({ autoDetect: message.autoDetect, speaker });
       // The server starts from its default; repeat a choice made before a reconnection.
       if (speaker && speaker !== message.speaker) this.backend?.send({ type: 'speaker', speaker });
+      // Holding a button to talk: no filter skips what is heard.
+      if (this.state.talkMode === 'hold') this.backend?.send({ type: 'talk-mode', mode: 'hold' });
     } else if (message.room) {
       const created = this.state.roomCode === undefined && this.options.room === undefined;
       this.update({ roomCode: message.room, inviteOpen: created || this.state.inviteOpen });
@@ -589,7 +660,8 @@ export class LiveSession {
       id: message.id,
       speaker: this.speakerName(message.speakerId, 'Them'),
       lang: message.lang,
-      text: message.text,
+      // Not its words: only ours are shown.
+      text: '',
       mine: this.isMine(message.speakerId),
       translation: undefined,
       skipped: { reason: message.reason, state: 'skipped' },
@@ -650,6 +722,65 @@ export class LiveSession {
     this.queue.ready(item);
   }
 
+  private onVoices(message: VoicesMessage): void {
+    const before = this.state.voices;
+    const progress = message.recording;
+    const recording = progress && { seconds: progress.seconds, of: progress.of, hint: progress.hint };
+    // Newly recorded: someone not saved, or not yet.
+    const recorded = !!before?.recording && !recording && !message.failed && message.partner === 'recorded';
+    this.update({
+      voices: {
+        partner: message.partner,
+        recording,
+        // A failure shows until put away, or until their voice is recorded again.
+        failed: message.failed ?? (recording ? undefined : before?.failed),
+        dismissed: before?.dismissed ?? false,
+        name: recorded || message.partner !== 'recorded' ? undefined : before?.name,
+        offerSave: recorded || (!recording && (before?.offerSave ?? false)),
+        people: before?.people ?? usablePeople(),
+      },
+    });
+    // The microphone stays on while it records, even in hold-to-talk.
+    if (!before?.recording !== !recording) this.updateMic();
+    this.updateIsolation();
+  }
+
+  /** One phone, translated by the app, with only our voices: whether the microphone may separate them. */
+  private separatesVoices(): boolean {
+    const { settings } = this;
+    return this.options.server === undefined && settings.mode === 'solo' && settings.onlyOurVoices && settings.separateVoices;
+  }
+
+  /**
+   * Once both voices are known, and theirs is not being recorded, the microphone keeps
+   * only those two in what it sends; until then, everything.
+   */
+  private updateIsolation(): void {
+    const mic = this.mic;
+    if (!mic || this.ended) return;
+    const voices = this.state.voices;
+    const theirs = voices?.partner === 'recorded' && !voices.recording ? this.backend?.partnerVoice?.() : undefined;
+    const kept: KeptVoices | undefined =
+      this.separatesVoices() && this.myPrint && theirs ? { model: VOICE_MODEL_FILE, prints: [this.myPrint, theirs] } : undefined;
+    if (!mic.isolate(kept)) return;
+    if (this.isolating !== (kept !== undefined)) {
+      this.isolating = kept !== undefined;
+      this.report?.note({ type: 'isolation', asked: this.isolating });
+    }
+  }
+
+  private onIsolation(event: IsolationEvent): void {
+    this.report?.note({ type: 'isolation', ...event });
+    if (event.state === 'on' && !this.toldSeparating) {
+      this.toldSeparating = true;
+      this.toast('Separating voices.');
+    } else if (event.state === 'slow') {
+      this.toast('Phone too slow to separate voices.');
+    } else if (event.state === 'failed') {
+      this.toast('Couldn’t separate voices.');
+    }
+  }
+
   /** Reads a translation aloud: with the natural voice if there is one, else the phone's own. */
   private async speak(item: SpeechItem): Promise<void> {
     if (item.audio) {
@@ -657,7 +788,7 @@ export class LiveSession {
         await this.voice.play(item.audio);
         return;
       } catch {
-        this.warnVoice('This phone could not play the natural voice, so its own voice reads instead.');
+        this.warnVoice('Natural voice unavailable · using the phone’s own voice.');
       }
     }
     if (!this.ended) await this.speech.speak(item.text, item.lang);
@@ -680,6 +811,12 @@ export class LiveSession {
       this.toSpeak.clear();
       this.forPartner.clear();
       this.interruptPending();
+      const voices = this.state.voices;
+      if (voices?.recording) {
+        this.update({ voices: { ...voices, recording: undefined } });
+        this.updateMic();
+        this.updateIsolation();
+      }
     }
     this.updateStatus();
   }
@@ -714,6 +851,101 @@ export class LiveSession {
     this.update({ entries: markSkipped(this.state.entries, (candidate) => candidate === id, 'accepting') });
     // The utterance comes back with the same id (see onUtterance).
     this.backend?.send({ type: 'accept', id });
+  }
+
+  /**
+   * One phone, while only the two people's voices are translated: records the other
+   * person's voice from what the microphone hears next, for this conversation only.
+   */
+  recordPartner(): void {
+    const voices = this.state.voices;
+    if (this.ended || this.connectionState !== 'ready' || !voices || voices.recording) return;
+    // Until the engine says how it goes, which it does straight away.
+    this.update({ voices: { ...voices, recording: { seconds: 0, of: 0, hint: undefined }, failed: undefined } });
+    // Their voice as heard: nothing separated out.
+    this.updateIsolation();
+    // They speak their language: recognized as theirs, they are translated meanwhile.
+    if (this.state.speaker === SOLO_ME) this.selectSpeaker(SOLO_THEM);
+    this.setMuted(false);
+    this.backend?.send({ type: 'record-voice' });
+    this.updateMic();
+  }
+
+  /** Stops recording their voice, keeping what was known of it before. */
+  stopRecording(): void {
+    const voices = this.state.voices;
+    if (this.ended || !voices?.recording) return;
+    this.update({ voices: { ...voices, recording: undefined } });
+    this.backend?.send({ type: 'stop-recording' });
+    this.updateMic();
+  }
+
+  /** Puts away the offer to record their voice, or what says a recording did not work. */
+  dismissVoices(): void {
+    const voices = this.state.voices;
+    if (!this.ended && voices) this.update({ voices: { ...voices, dismissed: true, failed: undefined } });
+  }
+
+  /** One phone: they are someone whose voice was saved in an earlier talk, so it needs no recording. */
+  usePartner(person: SavedPerson): void {
+    if (this.ended || this.connectionState !== 'ready' || !this.state.voices) return;
+    const print = readPersonVoice(person.id)?.print;
+    // Stopped first, so that it does not count as a new voice recorded (see onVoices).
+    this.stopRecording();
+    if (!print || !this.backend?.usePartnerVoice?.(print)) {
+      this.toast(`Couldn’t use ${person.name}’s voice. Record it instead.`);
+      return;
+    }
+    const voices = this.state.voices;
+    if (voices) this.update({ voices: { ...voices, name: person.name, offerSave: false, failed: undefined, dismissed: true } });
+    // Their print may be new even when the engine says nothing new.
+    this.updateIsolation();
+  }
+
+  /**
+   * Saves their voice as recorded in this talk on the phone, under their name, for the
+   * next talks. Only with their OK. False if it could not be saved.
+   */
+  async savePartner(name: string): Promise<boolean> {
+    const print = this.backend?.partnerVoice?.();
+    if (!print) return false;
+    try {
+      const person = await savePerson(name, print);
+      const voices = this.state.voices;
+      if (voices && !this.ended) {
+        const people = [person, ...voices.people.filter((other) => other.id !== person.id)];
+        this.update({ voices: { ...voices, name: person.name, offerSave: false, people } });
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Puts away the offer to save their voice. */
+  dismissSave(): void {
+    const voices = this.state.voices;
+    if (!this.ended && voices) this.update({ voices: { ...voices, offerSave: false } });
+  }
+
+  /**
+   * One phone: from now on, whoever talks holds their button meanwhile, which works better
+   * where it is loud. Kept for the next conversations too.
+   */
+  holdToTalk(): void {
+    if (this.ended || this.state.talkMode === 'hold') return;
+    this.update({ talkMode: 'hold', loud: false });
+    // If not connected, onReady sends it once the connection is back.
+    this.backend?.send({ type: 'talk-mode', mode: 'hold' });
+    this.options.onTalkModeChange?.('hold');
+    // Holding a button has no pause.
+    this.setMuted(false);
+    this.updateMic();
+  }
+
+  /** Puts away the advice to hold a button to talk. */
+  dismissLoud(): void {
+    if (!this.ended && this.state.loud) this.update({ loud: false });
   }
 
   selectSpeaker(selection: SpeakerSelection): void {
@@ -790,7 +1022,7 @@ export class LiveSession {
     if (this.earphones) return; // back within a moment
     this.earphones = true;
     this.voice.reset();
-    if (this.settings.output === 'earphones') this.toast('Earphones connected. Translations play in them.');
+    if (this.settings.output === 'earphones') this.toast('Earphones connected.');
     this.updateMic();
   }
 
@@ -806,7 +1038,7 @@ export class LiveSession {
     this.voice.reset();
     this.speech.cancel();
     if (this.settings.output === 'earphones') {
-      this.toast('The earphones were disconnected, so translations play on the phone speaker.');
+      this.toast('Earphones disconnected · using the phone speaker.');
     }
     this.updateMic();
   }
@@ -826,19 +1058,19 @@ export class LiveSession {
   }
 
   /**
-   * Off while muted or while no talk button is held (in hold-to-talk). Silent while the
-   * phone speaker reads a translation, so it does not transcribe itself, unless someone
-   * holds the talk button to interrupt.
+   * Off while muted or while no talk button is held (in hold-to-talk), unless the other
+   * person's voice is being recorded. Silent while the phone speaker reads a translation,
+   * so it does not transcribe itself, unless someone holds the talk button to interrupt.
    */
   private updateMic(): void {
     const mic = this.mic;
     if (!mic || this.ended) return;
     const { muted, holding } = this.state;
-    const userOff = muted || (this.settings.talkMode === 'hold' && !holding && !this.holdTail);
+    const recording = this.state.voices?.recording !== undefined;
+    const userOff = muted || (this.state.talkMode === 'hold' && !holding && !this.holdTail && !recording);
     const phoneTalking = this.speakerOutput() && (this.speaking || this.speakerTail) && !holding;
     const mode: MicMode = userOff ? 'off' : phoneTalking ? 'silent' : 'live';
-    // The turn is over: have what was just said transcribed and translated now.
-    if (mode === 'off' && mic.mode !== 'off') this.backend?.send({ type: 'flush' });
+    // Going off ends the turn: see onTurnEnd.
     mic.mode = mode;
     if (this.state.micMode !== mode) this.update({ micMode: mode });
     this.updateStatus();
@@ -860,7 +1092,7 @@ export class LiveSession {
     if (this.recognizer === 'starting') return ['Starting…', 'busy'];
     if (this.state.muted) return ['Paused', 'idle'];
     if (this.speaking && this.speakerOutput()) return ['Speaking…', 'speaking'];
-    if (this.settings.talkMode === 'hold' && !this.state.holding) {
+    if (this.state.talkMode === 'hold' && !this.state.holding && !this.state.voices?.recording) {
       return [this.settings.mode === 'solo' ? 'Hold a button to talk' : 'Hold to talk', 'idle'];
     }
     return ['Listening', 'live'];
@@ -901,4 +1133,9 @@ function withCode(reason: EndReason): EndReason {
   if (/rejected the API key/i.test(reason.message)) return { ...reason, code: 'keys' };
   if (/could not be downloaded|still downloading/i.test(reason.message)) return { ...reason, code: 'download' };
   return reason;
+}
+
+/** People whose saved voices this phone can use: printed by the current speaker model. */
+function usablePeople(): SavedPerson[] {
+  return listPeople().filter((person) => readPersonVoice(person.id) !== undefined);
 }

@@ -16,12 +16,14 @@ export interface FeedUtterance {
   translationLang: string | undefined;
 }
 
-/** One phone: something heard but not translated, as it seemed to come from someone else. */
+/**
+ * One phone: something heard but not translated, as it seemed to come from someone else.
+ * Not its words: only the two people's are shown.
+ */
 export interface FeedSkipped {
   id: string;
   /** The language it seemed to be in. */
   lang: string;
-  text: string;
   reason: SkipReason;
 }
 
@@ -42,6 +44,10 @@ const MAX_ENTRIES = 200;
 const SKIP_REASONS: Record<Exclude<SkipReason, 'language'>, string> = {
   distant: 'far away',
   voice: 'another voice',
+  unrecorded: 'voice not recorded',
+  short: 'too short to tell',
+  untimed: 'voice not checked',
+  direction: 'from the side',
 };
 /** Keep following new lines only when the user has not scrolled up to read. */
 const FOLLOW_WITHIN_PX = 80;
@@ -108,18 +114,13 @@ export class Feed {
       const why = line.reason === 'language' ? shortName(line.lang) : SKIP_REASONS[line.reason];
       const action = h(
         'button',
-        { type: 'button', class: 'skipped-translate', 'aria-label': `Translate “${line.text}”`, onclick: onTranslate },
+        { type: 'button', class: 'skipped-translate', 'aria-label': `Translate it after all (${why})`, onclick: onTranslate },
         'Translate',
       );
       const element = h(
         'li',
         { class: 'skipped', 'data-id': line.id },
-        h(
-          'div',
-          { class: 'skipped-text' },
-          h('p', { class: 'entry-meta' }, `Not translated · ${why}`),
-          h('p', { class: 'skipped-original', lang: line.lang, dir: 'auto' }, line.text),
-        ),
+        h('div', { class: 'skipped-text' }, h('p', { class: 'entry-meta' }, `Not translated · ${why}`)),
         action,
       );
       this.list.append(element);

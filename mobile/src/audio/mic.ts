@@ -8,9 +8,15 @@ import { AudioManager, AudioRecorder } from 'react-native-audio-api';
 import type { AudioBuffer } from 'react-native-audio-api';
 
 import { StreamingResampler, rms } from '../../../client/src/audio/resampler.ts';
+import type { Spatial } from '../../../shared/pipeline/direction.ts';
 import { AUDIO_SAMPLE_RATE } from '../../../shared/protocol.ts';
 import EarbridgeAudio from '../../modules/earbridge-audio/src/EarbridgeAudioModule.ts';
-import type { CaptureInput } from '../../modules/earbridge-audio/src/EarbridgeAudioModule.ts';
+import type {
+  AudioEvent,
+  CaptureInput,
+  IsolationEvent,
+  SeparationEvent,
+} from '../../modules/earbridge-audio/src/EarbridgeAudioModule.ts';
 import { fromBase64 } from '../base64.ts';
 import { startIosSession, stopIosSession } from './ios-session.ts';
 
@@ -25,12 +31,29 @@ export type MicMode = 'live' | 'silent' | 'off';
 export interface MicrophoneOptions {
   /** Listen through the earphones' microphone when they have one. */
   earphoneMic: boolean;
-  /** 16 kHz mono PCM16. */
-  onAudio(pcm: ArrayBuffer): void;
+  /** Also tell which way the sound comes from, when the phone can (see `canHearDirections`). */
+  directions?: boolean;
+  /** 16 kHz mono PCM16, and which way it came from when asked for and the phone could tell. */
+  onAudio(pcm: ArrayBuffer, spatial?: Spatial): void;
   /** Input level 0..1, ten times a second, whatever the mode. */
   onLevel(level: number): void;
   /** The microphone stopped by itself, e.g. a call took it. The message says why, in a sentence. */
   onEnded(message: string): void;
+  /**
+   * The mode went off and all that was heard before has come (onAudio): the turn can be
+   * finished. While keeping only some voices (see `isolate`), that is a moment later.
+   */
+  onTurnEnd?(): void;
+  /** While keeping only some voices: how each stretch of sound was split. */
+  onSeparation?(event: SeparationEvent): void;
+  /** Keeping only some voices started, stopped, could not keep up, or failed to start. */
+  onIsolation?(event: IsolationEvent): void;
+}
+
+/** Voice prints to keep, and the speaker model that made them (its file name). */
+export interface KeptVoices {
+  model: string;
+  prints: readonly Float32Array[];
 }
 
 /**
@@ -54,11 +77,25 @@ export interface Microphone {
   mode: MicMode;
   /** Which microphone listens. */
   readonly input: CaptureInput;
+  /**
+   * Keeps only voices like these in the sound sent (onAudio), taking out everyone else and
+   * most of the noise; every voice again with undefined. The sound then comes 0.5 to 2 s
+   * late, in bursts. False where the phone can't (iPhone).
+   */
+  isolate(voices: KeptVoices | undefined): boolean;
   stop(): void;
 }
 
 const NOT_ALLOWED_ANDROID = 'Alo isn’t allowed to use the microphone. Allow it in Settings › Apps › Alo › Permissions.';
 const NOT_ALLOWED_IOS = 'Alo isn’t allowed to use the microphone. Allow it in Settings › Alo.';
+
+/**
+ * Whether this phone may tell which way voices come from, by recording two of its
+ * microphones. Android only; whether a phone really has two shows once it records.
+ */
+export function canHearDirections(): boolean {
+  return EarbridgeAudio !== null;
+}
 
 export async function openMicrophone(options: MicrophoneOptions): Promise<Microphone> {
   if (EarbridgeAudio) {
@@ -77,19 +114,35 @@ export async function openMicrophone(options: MicrophoneOptions): Promise<Microp
   throw new MicrophoneError('This device is not supported.');
 }
 
+/** The phone's module applies the mode as it hears, and keeps only some voices if asked. */
 class AndroidMicrophone implements Microphone {
-  mode: MicMode = 'off';
   input: CaptureInput = { input: 'phone', name: 'Microphone' };
   private readonly module: NonNullable<typeof EarbridgeAudio>;
   private readonly options: MicrophoneOptions;
   private readonly subscriptions: { remove(): void }[];
   private stopped = false;
+  private current: MicMode = 'off';
+  private kept: KeptVoices | undefined;
 
   constructor(module: NonNullable<typeof EarbridgeAudio>, options: MicrophoneOptions) {
     this.module = module;
     this.options = options;
     this.subscriptions = [
-      module.addListener('onAudio', (event) => this.onAudio(event.pcm, event.level)),
+      module.addListener('onAudio', (event) => {
+        if (!this.stopped) options.onAudio(fromBase64(event.pcm).buffer, spatialOf(event));
+      }),
+      module.addListener('onLevel', ({ level }) => {
+        if (!this.stopped) options.onLevel(level);
+      }),
+      module.addListener('onTurnEnd', () => {
+        if (!this.stopped) options.onTurnEnd?.();
+      }),
+      module.addListener('onSeparation', (event) => {
+        if (!this.stopped) options.onSeparation?.(event);
+      }),
+      module.addListener('onIsolation', (event) => {
+        if (!this.stopped) options.onIsolation?.(event);
+      }),
       module.addListener('onCaptureError', (event) => {
         if (this.stopped) return;
         this.release();
@@ -98,10 +151,33 @@ class AndroidMicrophone implements Microphone {
     ];
   }
 
+  get mode(): MicMode {
+    return this.current;
+  }
+
+  set mode(mode: MicMode) {
+    this.current = mode;
+    if (!this.stopped) this.module.setMicMode(mode);
+  }
+
+  isolate(voices: KeptVoices | undefined): boolean {
+    if (this.stopped || sameVoices(voices, this.kept)) return true;
+    try {
+      if (voices) this.module.keepVoices({ model: voices.model, prints: voices.prints.map((print) => Array.from(print)) });
+      else this.module.keepAllVoices();
+    } catch {
+      return false;
+    }
+    this.kept = voices && { model: voices.model, prints: voices.prints.map((print) => print.slice()) };
+    return true;
+  }
+
   async start(): Promise<void> {
+    this.module.setMicMode(this.current);
     try {
       this.input = await this.module.startCapture({
         earphoneMic: this.options.earphoneMic,
+        directions: this.options.directions ?? false,
         testInputPath: TEST_AUDIO,
       });
     } catch (error) {
@@ -116,24 +192,35 @@ class AndroidMicrophone implements Microphone {
     this.module.stopCapture().catch(() => {});
   }
 
-  private onAudio(base64: string, level: number): void {
-    if (this.stopped) return;
-    this.options.onLevel(level);
-    if (this.mode === 'off') return;
-    const pcm = fromBase64(base64).buffer;
-    this.options.onAudio(this.mode === 'live' ? pcm : new ArrayBuffer(pcm.byteLength));
-  }
-
   private release(): void {
     this.stopped = true;
     for (const subscription of this.subscriptions.splice(0)) subscription.remove();
   }
 }
 
+/** What the phone told about which way the sound came from (nothing for silence sent instead). */
+function spatialOf(event: AudioEvent): Spatial | undefined {
+  if (event.pose === undefined) return undefined;
+  const { pose, delay, clarity } = event;
+  return delay !== undefined && clarity !== undefined ? { pose, direction: { delay, clarity } } : { pose };
+}
+
+function sameVoices(a: KeptVoices | undefined, b: KeptVoices | undefined): boolean {
+  if (!a || !b) return a === b;
+  return (
+    a.model === b.model &&
+    a.prints.length === b.prints.length &&
+    a.prints.every((print, k) => {
+      const other = b.prints[k];
+      return other !== undefined && print.length === other.length && print.every((value, i) => value === other[i]);
+    })
+  );
+}
+
 class IosMicrophone implements Microphone {
-  mode: MicMode = 'off';
   input: CaptureInput = { input: 'phone', name: 'Microphone' };
   private readonly options: MicrophoneOptions;
+  private current: MicMode = 'off';
   private readonly recorder = new AudioRecorder();
   private resampler: StreamingResampler | undefined;
   private resamplerRate = 0;
@@ -164,6 +251,21 @@ class IosMicrophone implements Microphone {
       this.release();
       throw new MicrophoneError(`Could not start the microphone: ${result.message}`);
     }
+  }
+
+  get mode(): MicMode {
+    return this.current;
+  }
+
+  /** Sound goes on as it is heard, so a turn is over as soon as the mode goes off. */
+  set mode(mode: MicMode) {
+    const ended = mode === 'off' && this.current !== 'off';
+    this.current = mode;
+    if (ended && !this.stopped) this.options.onTurnEnd?.();
+  }
+
+  isolate(): boolean {
+    return false;
   }
 
   stop(): void {

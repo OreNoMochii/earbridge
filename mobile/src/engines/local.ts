@@ -10,8 +10,9 @@ import type { OnDeviceRecognizer } from '../../../shared/pipeline/stt/on-device.
 import { TranslationError } from '../../../shared/pipeline/translate/types.ts';
 import type { TranslationRequest, Translator } from '../../../shared/pipeline/translate/types.ts';
 import EarbridgeOnDevice from '../../modules/earbridge-audio/src/EarbridgeOnDeviceModule.ts';
-import type { Settings } from '../../../client/src/settings.ts';
+import type { AppSettings } from '../app-settings.ts';
 import type { Pipeline } from './in-app-backend.ts';
+import { conversationVoices, releaseVoiceModel } from './voices.ts';
 
 type OnDeviceModule = NonNullable<typeof EarbridgeOnDevice>;
 
@@ -52,9 +53,20 @@ function checkSupport(): LocalSupport {
     : { available: false, reason: `This phone has no on-device speech recognition. ${OTHER_ENGINES}` };
 }
 
-/** Gets speech recognition and translation for both languages ready, downloading what is missing. */
+/**
+ * Whether the phone's recognizer can say when words were said, which the noisy-place
+ * filters need: Android 14 and newer.
+ */
+export function localWordTimings(): boolean {
+  return Platform.OS === 'android' && typeof Platform.Version === 'number' && Platform.Version >= 34;
+}
+
+/**
+ * Gets speech recognition and translation for both languages ready, downloading what is
+ * missing, and the voice model when only our two voices are translated.
+ */
 export async function prepareLocal(
-  settings: Settings,
+  settings: AppSettings,
   signal: AbortSignal,
   progress: (text: string) => void,
 ): Promise<Pipeline> {
@@ -68,6 +80,8 @@ export async function prepareLocal(
     locales[language] = await recognitionLocale(module, language, signal, progress);
   }
   await prepareTranslation(module, myLang, theirLang, signal, progress);
+  const wordTimings = localWordTimings();
+  const voices = wordTimings && settings.onlyOurVoices ? await conversationVoices(signal, progress) : undefined;
 
   return {
     stt: new OnDeviceSttProvider({ recognizer: nativeRecognizer(module), locales }),
@@ -76,8 +90,12 @@ export async function prepareLocal(
     voiceLangs: [],
     // It recognizes one language at a time, so the speaker is chosen with Me and Them.
     autoDetect: false,
-    wordTimings: false,
-    dispose: () => module.closeTranslation(),
+    wordTimings,
+    voices,
+    dispose: () => {
+      module.closeTranslation();
+      if (voices) releaseVoiceModel();
+    },
   };
 }
 

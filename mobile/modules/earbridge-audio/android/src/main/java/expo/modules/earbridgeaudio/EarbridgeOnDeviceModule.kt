@@ -11,6 +11,7 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.speech.ModelDownloadListener
 import android.speech.RecognitionListener
+import android.speech.RecognitionPart
 import android.speech.RecognitionSupport
 import android.speech.RecognitionSupportCallback
 import android.speech.RecognizerIntent
@@ -33,11 +34,13 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.Closeable
 import java.io.IOException
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 
 private const val TAG = "EarBridgeOnDevice"
 private const val SAMPLE_RATE = 16_000
+private const val BYTES_PER_SECOND = SAMPLE_RATE * 2
 /** Pipe writes up to this size are all or nothing, so dropping one never splits a sample. */
 private const val ATOMIC_WRITE_BYTES = 4_096
 /** About 8 s of audio, for while the recognizer finishes the previous turn. Linux allows up to 1 MB. */
@@ -52,6 +55,13 @@ private const val MAX_FAILURES_WHEN_ENDING = 2
 private const val CHECK_TIMEOUT_MS = 15_000L
 /** Partial results also carry the words the recognizer may still change (not in the public API). */
 private const val UNSTABLE_TEXT = "android.speech.extra.UNSTABLE_TEXT"
+/**
+ * Word timings only say when each word starts: the last one is taken to last this long for
+ * each of its letters, within bounds.
+ */
+private const val SECONDS_PER_LETTER = 0.07
+private const val SHORTEST_WORD_SECONDS = 0.2
+private const val LONGEST_WORD_SECONDS = 1.0
 private const val NEEDS_ANDROID_13 = "On-phone speech recognition needs Android 13 or newer."
 
 private class OnDeviceException(message: String, cause: Throwable? = null) :
@@ -131,7 +141,14 @@ private class RecognitionSession(val id: Int, val language: String) {
   var ready = false
   var heard = false
   var failures = 0
+  /** How much of the audio (bytes) the recognizer had read when its last run ended. */
+  var read = 0L
+  /** How much it had read when its current run began: word timings count from there. */
+  var runStart = 0L
 }
+
+/** When some recognized speech started and ended, in seconds since the session's first audio. */
+private class Timing(val start: Double, val end: Double)
 
 /**
  * Speech recognition and translation that run on the phone itself, with no server:
@@ -356,6 +373,7 @@ class EarbridgeOnDeviceModule : Module() {
     }
     session.ready = false
     session.heard = false
+    session.runStart = session.read
     listening = true
     try {
       val speech = recognizer ?: SpeechRecognizer.createOnDeviceSpeechRecognizer(context).also {
@@ -375,8 +393,8 @@ class EarbridgeOnDeviceModule : Module() {
   }
 
   @TargetApi(Build.VERSION_CODES.TIRAMISU)
-  private fun intentFor(session: RecognitionSession): Intent =
-    Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+  private fun intentFor(session: RecognitionSession): Intent {
+    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
       .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
       .putExtra(RecognizerIntent.EXTRA_LANGUAGE, session.language)
       .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
@@ -389,6 +407,12 @@ class EarbridgeOnDeviceModule : Module() {
       .putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE)
       .putExtra(RecognizerIntent.EXTRA_ENABLE_FORMATTING, RecognizerIntent.FORMATTING_OPTIMIZE_LATENCY)
       .putExtra(RecognizerIntent.EXTRA_MASK_OFFENSIVE_WORDS, false)
+    // When each word was said, so the app can tell whose voice it was and how near.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+      intent.putExtra(RecognizerIntent.EXTRA_REQUEST_WORD_TIMING, true)
+    }
+    return intent
+  }
 
   private val listener = object : RecognitionListener {
     override fun onReadyForSpeech(params: Bundle?) {
@@ -412,7 +436,7 @@ class EarbridgeOnDeviceModule : Module() {
       val stable = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
       val unstable = partialResults?.getStringArrayList(UNSTABLE_TEXT)?.firstOrNull().orEmpty()
       val text = (stable + unstable).trim()
-      if (text.isNotEmpty()) emit(session, "partial", text)
+      if (text.isNotEmpty()) emit(session, "partial", text, timing = timingOf(session, partialResults))
     }
 
     override fun onSegmentResults(segmentResults: Bundle) {
@@ -421,7 +445,7 @@ class EarbridgeOnDeviceModule : Module() {
       progress(session)
       bestText(segmentResults)?.let { text ->
         session.heard = true
-        emit(session, "segment", text)
+        emit(session, "segment", text, timing = timingOf(session, segmentResults))
       }
     }
 
@@ -433,7 +457,7 @@ class EarbridgeOnDeviceModule : Module() {
       val session = active() ?: return
       bestText(results)?.let { text ->
         session.heard = true
-        emit(session, "segment", text)
+        emit(session, "segment", text, timing = timingOf(session, results))
       }
       runEnded(session, readAll = false)
     }
@@ -467,6 +491,7 @@ class EarbridgeOnDeviceModule : Module() {
   private fun runEnded(session: RecognitionSession, readAll: Boolean) {
     listening = false
     disarmWatchdog()
+    stoppedReading(session)
     if (session.ending && (readAll || !session.heard)) {
       finish(session)
     } else {
@@ -477,6 +502,7 @@ class EarbridgeOnDeviceModule : Module() {
   private fun failed(session: RecognitionSession, error: Int) {
     listening = false
     disarmWatchdog()
+    stoppedReading(session)
     Log.d(TAG, "session ${session.id}: error $error")
     when (error) {
       // Nothing (more) was said.
@@ -509,6 +535,14 @@ class EarbridgeOnDeviceModule : Module() {
       dropRecognizer()
     }
     schedule(session, minOf(RESTART_DELAY_MS shl session.failures, 3_000L))
+  }
+
+  /**
+   * The recognizer read the audio as it came, so it got about as far as was written; unless it
+   * failed before it was ready, and so read none.
+   */
+  private fun stoppedReading(session: RecognitionSession) {
+    if (session.ready) session.read = session.pipe.bytesWritten
   }
 
   private fun fatal(session: RecognitionSession, error: Int) {
@@ -602,18 +636,54 @@ class EarbridgeOnDeviceModule : Module() {
     closeTranslators()
   }
 
-  private fun emit(session: RecognitionSession, type: String, text: String? = null, code: Int? = null, fatal: Boolean? = null) {
+  private fun emit(
+    session: RecognitionSession,
+    type: String,
+    text: String? = null,
+    code: Int? = null,
+    fatal: Boolean? = null,
+    timing: Timing? = null,
+  ) {
     val event = mutableMapOf<String, Any>("session" to session.id, "type" to type)
     text?.let { event["text"] = it }
     code?.let { event["code"] = it }
     fatal?.let { event["fatal"] = it }
+    timing?.let {
+      event["start"] = it.start
+      event["end"] = it.end
+    }
     // Never the words themselves: they stay on the phone, out of the logs.
-    if (type != "partial") Log.d(TAG, "session ${session.id}: $type${code?.let { " $it" } ?: ""}${text?.let { " (${it.length} chars)" } ?: ""}")
+    if (type != "partial") {
+      val details = (code?.let { " $it" } ?: "") + (text?.let { " (${it.length} chars)" } ?: "") +
+        (timing?.let { " %.2f-%.2f s".format(Locale.ROOT, it.start, it.end) } ?: "")
+      Log.d(TAG, "session ${session.id}: $type$details")
+    }
     sendEvent("onRecognition", event)
   }
 
   private fun bestText(results: Bundle?): String? =
     results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+
+  /**
+   * When the speech in some results started and ended, from its word timings: Android 14
+   * and newer, and only from recognizers that report them (Google's does for whole
+   * sentences, not for partial results). Each word's time counts from the start of the run.
+   */
+  private fun timingOf(session: RecognitionSession, results: Bundle?): Timing? {
+    if (results == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return null
+    val parts = results.getParcelableArrayList(SpeechRecognizer.RECOGNITION_PARTS, RecognitionPart::class.java)
+    if (parts.isNullOrEmpty()) return null
+    val last = parts.last()
+    // All at the very start: a recognizer that leaves the times out.
+    if (last.timestampMillis == 0L) return null
+    val letters = (last.formattedText ?: last.rawText)?.length ?: 0
+    val lastLasts = (letters * SECONDS_PER_LETTER).coerceIn(SHORTEST_WORD_SECONDS, LONGEST_WORD_SECONDS)
+    val runStart = session.runStart.toDouble() / BYTES_PER_SECOND
+    val written = session.pipe.bytesWritten.toDouble() / BYTES_PER_SECOND
+    val start = runStart + parts.first().timestampMillis / 1000.0
+    val end = minOf(runStart + last.timestampMillis / 1000.0 + lastLasts, written)
+    return Timing(start, maxOf(start, end))
+  }
 
   // ---------------------------------------------------------------- translation (main thread)
 

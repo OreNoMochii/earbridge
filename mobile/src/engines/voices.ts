@@ -1,6 +1,7 @@
 // "Only our voices": voice prints made on the phone by a small speaker model, downloaded
 // once. The phone owner's print comes from a recording made in the settings and is kept
-// in the phone's secure storage. Neither the recording nor the print leaves the phone.
+// in the phone's secure storage, like the prints of people they talk with, saved with
+// those people's OK. Neither the recordings nor the prints leave the phone.
 
 import * as SecureStore from 'expo-secure-store';
 
@@ -15,10 +16,18 @@ const MODEL = {
   url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx',
   sha256: 'aa3cfc16963a10586a9393f5035d6d6b57e98d358b347f80c2a30bf4f00ceba2',
 };
+/** The speaker model's file name, for the microphone's own voice separation (see mic.ts). */
+export const VOICE_MODEL_FILE = MODEL.file;
 /** About how much the voice model downloads, in MB. */
 export const VOICE_MODEL_MB = 28;
 
 const MY_VOICE = 'earbridge.myVoice';
+/** Who has a voice print saved: the secure storage cannot list what it keeps. */
+const PEOPLE = 'earbridge.people';
+/** Where one person's voice print is kept. Ids are letters and digits, as keys must be. */
+const personVoice = (id: string) => `earbridge.voice.${id}`;
+/** How long a name can be. */
+export const NAME_LENGTH = 40;
 /** Like the API keys: kept out of backups and off other phones. */
 const SECURE_OPTIONS: SecureStore.SecureStoreOptions = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY };
 
@@ -88,29 +97,110 @@ export async function conversationVoices(
 
 // ---------------------------------------------------------------- my voice
 
+/** A voice print as kept, with when it was recorded (not known for older ones). */
+export interface KeptVoice {
+  print: Float32Array;
+  /** In ms since 1970. */
+  saved: number | undefined;
+}
+
 /** My voice print, if it was recorded with the current model. */
 export function loadMyVoice(): Float32Array | undefined {
+  return readVoice(MY_VOICE)?.print;
+}
+
+export function readMyVoice(): KeptVoice | undefined {
+  return readVoice(MY_VOICE);
+}
+
+/** Rejects if the phone could not store it. */
+export async function saveMyVoice(print: Float32Array): Promise<void> {
+  await writeVoice(MY_VOICE, print, Date.now());
+}
+
+export async function deleteMyVoice(): Promise<void> {
+  await SecureStore.deleteItemAsync(MY_VOICE);
+}
+
+// ---------------------------------------------------------------- people I talk with
+
+/** Someone whose voice print is saved on the phone, with their OK, for the next conversations. */
+export interface SavedPerson {
+  /** Letters and digits. */
+  id: string;
+  name: string;
+  /** When their voice was recorded, in ms since 1970. */
+  saved: number;
+}
+
+/** Everyone with a saved voice print, most recently recorded first. */
+export function listPeople(): SavedPerson[] {
   try {
-    const saved: unknown = JSON.parse(SecureStore.getItem(MY_VOICE) ?? 'null');
-    if (typeof saved !== 'object' || saved === null) return undefined;
-    const { model, print } = saved as Record<string, unknown>;
+    const people: unknown = JSON.parse(SecureStore.getItem(PEOPLE) ?? '[]');
+    return Array.isArray(people) ? people.filter(isPerson).sort((a, b) => b.saved - a.saved) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Their voice print, unless it was made by another speaker model or can no longer be read. */
+export function readPersonVoice(id: string): KeptVoice | undefined {
+  return readVoice(personVoice(id));
+}
+
+/** Saves their voice print under their name, instead of one saved under the same name. */
+export async function savePerson(name: string, print: Float32Array): Promise<SavedPerson> {
+  const people = listPeople();
+  const trimmed = name.trim().slice(0, NAME_LENGTH);
+  const same = people.find((person) => person.name.toLocaleLowerCase() === trimmed.toLocaleLowerCase());
+  const person: SavedPerson = { id: same?.id ?? newId(), name: trimmed, saved: Date.now() };
+  // The print first, so the list never names someone without one.
+  await writeVoice(personVoice(person.id), print, person.saved);
+  await writePeople([person, ...people.filter((other) => other.id !== person.id)]);
+  return person;
+}
+
+export async function deletePerson(id: string): Promise<void> {
+  // The print first: a name left on the list can be deleted again, a print left alone could not.
+  await SecureStore.deleteItemAsync(personVoice(id));
+  await writePeople(listPeople().filter((person) => person.id !== id));
+}
+
+async function writePeople(people: SavedPerson[]): Promise<void> {
+  await SecureStore.setItemAsync(PEOPLE, JSON.stringify(people), SECURE_OPTIONS);
+}
+
+function isPerson(value: unknown): value is SavedPerson {
+  if (typeof value !== 'object' || value === null) return false;
+  const { id, name, saved } = value as Record<string, unknown>;
+  return typeof id === 'string' && /^[a-z0-9]{1,40}$/.test(id) && typeof name === 'string' && typeof saved === 'number';
+}
+
+function newId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// ---------------------------------------------------------------- kept voice prints
+
+function readVoice(key: string): KeptVoice | undefined {
+  try {
+    const kept: unknown = JSON.parse(SecureStore.getItem(key) ?? 'null');
+    if (typeof kept !== 'object' || kept === null) return undefined;
+    const { model, print, saved } = kept as Record<string, unknown>;
     if (model !== MODEL.file || typeof print !== 'string') return undefined;
     const bytes = fromBase64(print);
-    return bytes.length > 0 && bytes.length % 4 === 0 ? new Float32Array(bytes.buffer) : undefined;
+    if (bytes.length === 0 || bytes.length % 4 !== 0) return undefined;
+    return { print: new Float32Array(bytes.buffer), saved: typeof saved === 'number' ? saved : undefined };
   } catch {
-    // Unreadable, e.g. Android reset its keystore: my voice has to be recorded again.
+    // Unreadable, e.g. Android reset its keystore: the voice has to be recorded again.
     return undefined;
   }
 }
 
 /** Rejects if the phone could not store it. */
-export async function saveMyVoice(print: Float32Array): Promise<void> {
+async function writeVoice(key: string, print: Float32Array, saved: number): Promise<void> {
   const bytes = new Uint8Array(print.buffer, print.byteOffset, print.byteLength);
-  await SecureStore.setItemAsync(MY_VOICE, JSON.stringify({ model: MODEL.file, print: toBase64(bytes) }), SECURE_OPTIONS);
-}
-
-export async function deleteMyVoice(): Promise<void> {
-  await SecureStore.deleteItemAsync(MY_VOICE);
+  await SecureStore.setItemAsync(key, JSON.stringify({ model: MODEL.file, print: toBase64(bytes), saved }), SECURE_OPTIONS);
 }
 
 function voiceModule(): NonNullable<typeof EarbridgeVoice> {

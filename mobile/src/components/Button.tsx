@@ -38,9 +38,9 @@ export function Button({ kind = 'secondary', label, icon, next, disabled, onPres
       onPress={onPress}
       style={({ pressed }) => [styles.button, styles[kind], pressed && styles.pressed, disabled && styles.disabled, style]}
     >
-      {icon && <Icon name={icon} size={26} color={color} />}
+      {icon && <Icon name={icon} size={22} color={color} />}
       <Text style={[styles.label, { color }]}>{label}</Text>
-      {next && <Icon name="arrow-right" size={26} color={color} />}
+      {next && <Icon name="arrow-right" size={22} color={color} />}
     </Pressable>
   );
 }
@@ -72,7 +72,7 @@ export function CompactButton({ kind = 'plain', label, icon, disabled, onPress, 
         style,
       ]}
     >
-      {icon && <Icon name={icon} size={22} color={color} />}
+      {icon && <Icon name={icon} size={20} color={color} />}
       <Text style={[kind === 'danger' ? styles.compactDangerLabel : styles.compactLabel, { color }]}>{label}</Text>
     </Pressable>
   );
@@ -99,8 +99,8 @@ export function HeroButton({ title, subtitle, icon, kind = 'main', onPress }: He
       onPress={onPress}
       style={({ pressed }) => [styles.hero, main ? styles.heroMain : styles.heroOther, pressed && styles.pressed]}
     >
-      <View style={[styles.heroIcon, !main && styles.heroIconOther]}>
-        <Icon name={icon} size={main ? 32 : 28} color={palette.accent} />
+      <View style={styles.heroIcon}>
+        <Icon name={icon} size={28} color={palette.accent} />
       </View>
       <View style={styles.heroText}>
         <Text style={[main ? styles.heroTitle : styles.heroTitleOther, { color }]}>{title}</Text>
@@ -113,7 +113,7 @@ export function HeroButton({ title, subtitle, icon, kind = 'main', onPress }: He
 
 const useStyles = themedStyles((palette) => ({
   button: {
-    minHeight: 64,
+    minHeight: 56,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -126,6 +126,7 @@ const useStyles = themedStyles((palette) => ({
     backgroundColor: palette.accent,
   },
   secondary: {
+    paddingHorizontal: 22,
     borderWidth: 2,
     borderColor: palette.borderStrong,
     backgroundColor: palette.surface,
@@ -145,20 +146,20 @@ const useStyles = themedStyles((palette) => ({
     opacity: 0.5,
   },
   compact: {
-    minHeight: 56,
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 6,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderWidth: 2,
     borderColor: palette.borderStrong,
     borderRadius: 16,
     backgroundColor: palette.surface,
   },
   compactDanger: {
-    paddingHorizontal: 22,
+    paddingHorizontal: 20,
     borderColor: palette.danger,
     backgroundColor: palette.danger,
   },
@@ -181,39 +182,33 @@ const useStyles = themedStyles((palette) => ({
   hero: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
-    padding: 20,
+    gap: 14,
+    padding: 16,
     borderRadius: RADIUS_LG,
   },
   heroMain: {
     backgroundColor: palette.accent,
   },
   heroOther: {
+    padding: 14,
     borderWidth: 2,
     borderColor: palette.borderStrong,
     backgroundColor: palette.surface,
   },
   heroIcon: {
-    width: 64,
-    height: 64,
+    width: 52,
+    height: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 32,
+    borderRadius: 26,
     backgroundColor: palette.accentSoft,
-  },
-  heroIconOther: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
   },
   heroText: {
     flex: 1,
     gap: 2,
   },
   heroTitle: {
-    ...type.title,
-    fontSize: 26,
-    lineHeight: 33,
+    ...type.heading,
   },
   heroTitleOther: {
     ...type.section,

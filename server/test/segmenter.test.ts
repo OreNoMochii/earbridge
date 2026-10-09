@@ -34,6 +34,28 @@ describe('UtteranceSegmenter', () => {
     assert.equal(utterances.length, 0);
   });
 
+  it('keeps when each word was said, across finals and under an interim', () => {
+    const details: SpeechDetails[] = [];
+    const segmenter = new UtteranceSegmenter({
+      interim: (_text, _lang, d) => details.push(d),
+      utterance: (_text, _lang, d) => details.push(d),
+    });
+    const where = { text: 'Where', start: 0.5, end: 1 };
+    const is = { text: 'is', start: 1, end: 1.2, language: 'en' };
+    const it = { text: 'it', start: 1.5, end: 1.7 };
+    segmenter.handleResult(result('Where is', { isFinal: true, start: 0.5, end: 1.2, words: [where, is] }));
+    segmenter.handleResult(result('it', { start: 1.5, end: 1.7, words: [it] }));
+    segmenter.handleResult(result('it', { isFinal: true, speechFinal: true, start: 1.5, end: 1.7, words: [it] }));
+    assert.deepEqual(
+      details.map((d) => d.words),
+      [[where, is], [where, is, it], [where, is, it]],
+    );
+    assert.equal(details[2]!.start, 0.5);
+    assert.equal(details[2]!.end, 1.7);
+    segmenter.handleResult(result('Thanks', { isFinal: true, speechFinal: true }));
+    assert.equal(details[3]!.words, undefined);
+  });
+
   it('emits one utterance when the speaker finishes', () => {
     const { segmenter, utterances } = setup();
     segmenter.handleResult(result('Where is the station', { isFinal: true }));

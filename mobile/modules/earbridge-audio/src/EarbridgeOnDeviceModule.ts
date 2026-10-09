@@ -3,8 +3,12 @@ import { type NativeModule, requireOptionalNativeModule } from 'expo';
 /** What the recognizer reports for a session. "end" always comes last, after a fatal error too. */
 export type RecognitionEvent =
   | { session: number; type: 'ready' }
-  /** What it is hearing so far in the current sentence, or the sentence once it is done. */
-  | { session: number; type: 'partial' | 'segment'; text: string }
+  /**
+   * What it is hearing so far in the current sentence, or the sentence once it is done.
+   * `start` and `end`: when its words were said, in seconds since the session's first
+   * audio (Android 14 and newer, from recognizers that report word timings).
+   */
+  | { session: number; type: 'partial' | 'segment'; text: string; start?: number; end?: number }
   /** An Android SpeechRecognizer error code. */
   | { session: number; type: 'error'; code: number; fatal: boolean }
   | { session: number; type: 'end' };

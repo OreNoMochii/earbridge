@@ -1,4 +1,4 @@
-import type { SttResult } from './types.ts';
+import type { SttResult, SttWord } from './types.ts';
 
 /** What else the recognizer said about some speech. */
 export interface SpeechDetails {
@@ -7,6 +7,8 @@ export interface SpeechDetails {
   /** When the speech started and ended on the stream's clock (seconds), if it reports word timings. */
   start?: number;
   end?: number;
+  /** Each word with when it was said, if it times them one by one. */
+  words?: SttWord[];
 }
 
 export interface SegmenterOutput {
@@ -30,6 +32,7 @@ export class UtteranceSegmenter {
   private languageVotes = new Map<string, number>();
   private start: number | undefined;
   private end: number | undefined;
+  private words: SttWord[] = [];
 
   constructor(output: SegmenterOutput, maxWords = 40) {
     this.output = output;
@@ -54,6 +57,7 @@ export class UtteranceSegmenter {
       }
       if (result.start !== undefined) this.start = Math.min(this.start ?? Infinity, result.start);
       if (result.end !== undefined) this.end = Math.max(this.end ?? -Infinity, result.end);
+      if (result.words) this.words.push(...result.words);
     }
 
     if (result.speechFinal || result.fromFinalize || this.isTooLong()) {
@@ -76,6 +80,7 @@ export class UtteranceSegmenter {
     this.languageVotes = new Map();
     this.start = undefined;
     this.end = undefined;
+    this.words = [];
     this.output.utterance(text, dominantLanguage(details.languages), details);
   }
 
@@ -96,10 +101,12 @@ export class UtteranceSegmenter {
     for (const lang of pending?.wordLanguages ?? []) languages.set(lang, (languages.get(lang) ?? 0) + 1);
     const start = minimum(this.start, pending?.start);
     const end = maximum(this.end, pending?.end);
+    const words = [...this.words, ...(pending?.words ?? [])];
     return {
       languages,
       ...(start !== undefined ? { start } : {}),
       ...(end !== undefined ? { end } : {}),
+      ...(words.length > 0 ? { words } : {}),
     };
   }
 }

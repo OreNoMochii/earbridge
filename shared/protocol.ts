@@ -19,6 +19,12 @@ export type Mode = 'solo' | 'room';
 /** Who the one-phone recognizer should expect to hear next. */
 export type SpeakerSelection = 'auto' | 'me' | 'them';
 
+/**
+ * One phone: whether the two just talk ('handsfree', at the start), or whoever talks holds
+ * a button meanwhile ('hold').
+ */
+export type TalkMode = 'handsfree' | 'hold';
+
 export interface HelloSolo {
   type: 'hello';
   mode: 'solo';
@@ -59,7 +65,16 @@ export type ClientMessage =
   /** End of a turn (e.g. push-to-talk released): translate what was heard so far. */
   | { type: 'flush' }
   /** solo: translate something that was `skipped` after all (one of the latest SKIPPED_KEPT). */
-  | { type: 'accept'; id: string };
+  | { type: 'accept'; id: string }
+  /**
+   * solo, while only the two people's voices are translated: record the other person's
+   * voice from what the microphone hears next, for this conversation only.
+   */
+  | { type: 'record-voice' }
+  /** Stop recording their voice, keeping what was known of it before. */
+  | { type: 'stop-recording' }
+  /** solo: holding a button, whoever talks says it is them, so no noisy-place filter skips it. */
+  | { type: 'talk-mode'; mode: TalkMode };
 
 export interface Participant {
   id: string;
@@ -81,7 +96,29 @@ export type SkipReason =
   /** Much quieter than the two people at the phone: someone further away, or a radio. */
   | 'distant'
   /** Neither of the two voices of the conversation. */
-  | 'voice';
+  | 'voice'
+  /** Said for the other person, not in my voice, while theirs is not recorded: only recorded voices are translated. */
+  | 'unrecorded'
+  /** Too short to tell whose voice it is, while only the two voices are translated. */
+  | 'short'
+  /** The recognizer did not say when it was said, so whose voice it is could not be checked. */
+  | 'untimed'
+  /** From a side of the phone, not from where either of the two people sits. */
+  | 'direction';
+
+/** solo: how the other person's voice is known, while only the two people's are translated. */
+export type PartnerVoice =
+  /** Not yet: until it is recorded, only my voice is translated. */
+  | 'unknown'
+  /** From a recording made for this conversation (`record-voice`), or saved from an earlier one. */
+  | 'recorded';
+
+/** Why recording the other person's voice is not going well, or did not work. */
+export type RecordingProblem =
+  /** Too little of their voice was heard. */
+  | 'quiet'
+  /** It heard my voice, not theirs. */
+  | 'mine';
 
 export type ServerMessage =
   | {
@@ -96,7 +133,10 @@ export type ServerMessage =
       voiceLangs: string[];
     }
   | { type: 'participants'; participants: Participant[] }
-  /** Live, not-yet-final transcript of what someone is saying. */
+  /**
+   * Live, not-yet-final transcript of what someone is saying. solo: only once it seems to
+   * be one of the two people; empty text stops showing it.
+   */
   | { type: 'interim'; speakerId: string; lang: string; text: string }
   /** A finished utterance in its original language. Translations reference its id. */
   | {
@@ -110,13 +150,13 @@ export type ServerMessage =
   /**
    * solo: something heard that seems to come from someone else, so it is not translated
    * unless the phone sends `accept` with its id. `lang` is the language it seemed to be in.
+   * Its words are not sent: only the two people's are shown.
    */
   | {
       type: 'skipped';
       id: string;
       speakerId: string;
       lang: string;
-      text: string;
       reason: SkipReason;
     }
   /** Translation of an utterance; `text` is cumulative, sent repeatedly while streaming. */
@@ -134,6 +174,23 @@ export type ServerMessage =
    * own voice should read the translation instead.
    */
   | { type: 'speech'; id: string; lang: string; audio: string[]; error?: string }
+  /**
+   * solo, while only the two people's voices are translated: how the other person's voice
+   * is known, sent at the start and whenever that changes. `recording` while their voice
+   * is being recorded: `seconds` of it so far, `of` the seconds needed, and maybe a
+   * `hint` of what is going wrong. `failed` once, when a recording did not work.
+   */
+  | {
+      type: 'voices';
+      partner: PartnerVoice;
+      recording?: { seconds: number; of: number; hint?: RecordingProblem };
+      failed?: RecordingProblem;
+    }
+  /**
+   * solo, at most once, while the two just talk: the place is so loud, compared with how
+   * they sound, that no filter can tell them from the others. Holding a button works better.
+   */
+  | { type: 'loud' }
   | { type: 'status'; stt: 'connecting' | 'live' | 'reconnecting' }
   /** A fatal error ends the session; the server closes the socket right after it. */
   | { type: 'error'; message: string; fatal: boolean; code?: ErrorCode };

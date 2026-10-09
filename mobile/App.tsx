@@ -18,6 +18,7 @@ import { KeysScreen } from './src/screens/KeysScreen.tsx';
 import { LiveScreen } from './src/screens/LiveScreen.tsx';
 import type { Update } from './src/screens/parts.tsx';
 import { SettingsScreen } from './src/screens/SettingsScreen.tsx';
+import { VoicesScreen } from './src/screens/VoicesScreen.tsx';
 import { WizardScreen } from './src/screens/WizardScreen.tsx';
 import { normalizeServerUrl, serverLabel } from './src/server-url.ts';
 import { usePalette } from './src/theme.ts';
@@ -27,7 +28,8 @@ type Page =
   | { name: 'home' }
   | { name: 'settings'; check?: boolean }
   | { name: 'keys'; back: 'home' | 'settings'; check?: boolean }
-  | { name: 'group' };
+  | { name: 'group' }
+  | { name: 'voices' };
 
 export default function App() {
   return (
@@ -89,6 +91,7 @@ function Main() {
         setError(reason);
         setSession(undefined);
       },
+      onTalkModeChange: (talkMode) => setSettings((current) => ({ ...current, talkMode })),
     });
     setSession(live);
     void live.start();
@@ -136,8 +139,11 @@ function Main() {
         check={page.check}
         onDone={() => navigate({ name: 'home' })}
         onKeys={() => navigate({ name: 'keys', back: 'settings' })}
+        onVoices={() => navigate({ name: 'voices' })}
       />
     );
+  } else if (page.name === 'voices') {
+    screen = <VoicesScreen settings={settings} onChange={update} onBack={() => navigate({ name: 'settings' })} />;
   } else if (page.name === 'keys') {
     const back = () => navigate({ name: page.back });
     screen = <KeysScreen settings={settings} onChange={update} check={page.check} onBack={back} onDone={back} />;

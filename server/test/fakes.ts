@@ -13,10 +13,13 @@ export class FakeSttStream implements SttStream {
   readonly audio: Uint8Array[] = [];
   finalized = 0;
   closed = false;
+  /** Every complete utterance heard, by this stream and the others of its provider. */
+  private readonly said: string[];
 
-  constructor(language: string, events: SttEvents) {
+  constructor(language: string, events: SttEvents, said: string[] = []) {
     this.language = language;
     this.events = events;
+    this.said = said;
   }
 
   sendAudio(chunk: Uint8Array): void {
@@ -35,6 +38,7 @@ export class FakeSttStream implements SttStream {
 
   /** The recognizer heard a complete utterance, said between two times (seconds into the stream). */
   say(text: string, wordLanguages: string[] = [], timing: { start: number; end: number } | object = {}): void {
+    this.said.push(text);
     this.events.onResult({ text, isFinal: true, speechFinal: true, fromFinalize: false, wordLanguages, ...timing });
   }
 
@@ -46,9 +50,11 @@ export class FakeSttStream implements SttStream {
 
 export class FakeSttProvider implements SttProvider {
   readonly streams: FakeSttStream[] = [];
+  /** Every complete utterance its streams heard, in order. */
+  readonly said: string[] = [];
 
   open(options: SttStreamOptions, events: SttEvents): SttStream {
-    const stream = new FakeSttStream(options.language, events);
+    const stream = new FakeSttStream(options.language, events, this.said);
     this.streams.push(stream);
     events.onStatus('connecting');
     return stream;

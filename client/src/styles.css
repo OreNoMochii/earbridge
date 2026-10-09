@@ -807,16 +807,6 @@ fieldset {
   min-width: 0;
 }
 
-.skipped-original {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-
 .skipped-translate {
   flex: none;
   min-height: 2.25rem;
