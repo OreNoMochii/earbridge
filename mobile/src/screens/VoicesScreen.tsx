@@ -123,7 +123,7 @@ export function VoicesScreen({ settings, onChange, onBack }: VoicesScreenProps) 
         </View>
 
         <View style={styles.section}>
-          <SectionTitle hint="Pick one when a talk starts, instead of recording them again.">People you talk with</SectionTitle>
+          <SectionTitle hint="Pick one when a talk starts, so their voice is known from the first word.">People you talk with</SectionTitle>
           {people.length === 0 && <Text style={styles.empty}>Nobody saved yet.</Text>}
           {people.map((person) => (
             <View key={person.id} style={styles.card}>

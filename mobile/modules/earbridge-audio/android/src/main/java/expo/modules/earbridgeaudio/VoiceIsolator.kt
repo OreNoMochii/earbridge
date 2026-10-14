@@ -102,9 +102,14 @@ internal class VoiceIsolator(
     }
   }
 
-  /** Keeps only voices like these prints from now on; `model` is the speaker model that made them. */
+  /**
+   * Keeps only voices like these prints from now on; `model` is the speaker model that made
+   * them. Already keeping voices with that model, it just takes the prints, from the next
+   * block on: as a voice is learned further, its print changes with most lines.
+   */
   fun keep(voices: List<FloatArray>, model: File) = execute {
-    if (keeping && printerModel == model && voices.size == prints.size && voices.indices.all { voices[it].contentEquals(prints[it]) }) {
+    if (keeping && printerModel == model) {
+      if (voices.size != prints.size || !voices.indices.all { voices[it].contentEquals(prints[it]) }) prints = voices.map { it.copyOf() }
       return@execute
     }
     finishRun()

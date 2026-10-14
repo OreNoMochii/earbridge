@@ -1,6 +1,7 @@
 // One phone, while only the two people's voices are translated: whether both voices are
-// known, a way to record the other person's for this conversation, and how that goes, or
-// to choose them among people whose voices were saved, and to save theirs, with their OK.
+// known, the other person's being learned as they talk, a way to say the voice learned is
+// someone else's, to record it for this conversation instead, and how that goes, or to
+// choose them among people whose voices were saved, and to save theirs, with their OK.
 
 import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -57,6 +58,7 @@ function VoicesCard({ session, voices, onSave }: VoicesBarProps & { onSave(): vo
   const [open, setOpen] = useState(false);
   const { partner, recording, failed, name, people } = voices;
   const recorded = partner === 'recorded';
+  const learned = partner === 'learned';
   const record = () => {
     setOpen(false);
     session.recordPartner();
@@ -64,6 +66,10 @@ function VoicesCard({ session, voices, onSave }: VoicesBarProps & { onSave(): vo
   const choose = (person: SavedPerson) => {
     setOpen(false);
     session.usePartner(person);
+  };
+  const forget = () => {
+    setOpen(false);
+    session.forgetPartner();
   };
 
   if (recording) {
@@ -126,46 +132,80 @@ function VoicesCard({ session, voices, onSave }: VoicesBarProps & { onSave(): vo
     );
   }
 
-  if (partner === 'unknown' && (open || !voices.dismissed)) {
-    const dismiss = () => {
-      setOpen(false);
-      session.dismissVoices();
-    };
-    if (people.length > 0) {
-      return (
-        <View style={styles.card}>
-          <View style={styles.head}>
-            <Icon name="users" size={24} color={palette.accent} />
-            <Text style={styles.title}>Who are you talking with?</Text>
-          </View>
-          <People people={people} onChoose={choose} />
-          <View style={styles.buttons}>
-            <CompactButton
-              label="Someone new"
-              icon="mic"
-              accessibilityLabel="Someone new: record their voice"
-              onPress={record}
-              style={styles.button}
-            />
-            <CompactButton label="Not now" onPress={dismiss} style={styles.button} />
-          </View>
-        </View>
-      );
-    }
+  if (partner === 'unknown' && !open && !voices.dismissed && people.length > 0) {
     return (
       <View style={styles.card}>
         <View style={styles.head}>
-          <Icon name="mic" size={24} color={palette.accent} />
-          <Text style={styles.title}>Record their voice</Text>
+          <Icon name="users" size={24} color={palette.accent} />
+          <Text style={styles.title}>Who are you talking with?</Text>
         </View>
-        <Text style={styles.text}>Only recorded voices are translated. Ask them to say a few words.</Text>
+        <People people={people} onChoose={choose} />
+        <View style={styles.buttons}>
+          <CompactButton
+            label="Someone new"
+            icon="user-plus"
+            accessibilityLabel="Someone new: their voice is learned as they talk"
+            onPress={() => session.dismissVoices()}
+            style={styles.button}
+          />
+        </View>
+      </View>
+    );
+  }
+
+  if (open && partner === 'unknown') {
+    return (
+      <View style={styles.card}>
+        <View style={styles.head}>
+          <Icon name="audio-lines" size={24} color={palette.busy} />
+          <Text style={styles.title}>Learning their voice</Text>
+        </View>
+        <Text style={styles.text}>It is learned as they talk. Until then, other people’s words may be translated too.</Text>
+        {people.length > 0 && (
+          <View style={styles.others}>
+            <Text style={styles.label}>Talking with one of them?</Text>
+            <People people={people} onChoose={choose} />
+          </View>
+        )}
         <View style={styles.buttons}>
           <CompactButton label="Record" icon="mic" accessibilityLabel="Record their voice" onPress={record} style={styles.button} />
-          <CompactButton label="Not now" onPress={dismiss} style={styles.button} />
+          <CompactButton label="Close" onPress={() => setOpen(false)} style={styles.button} />
         </View>
         <View style={styles.privacy}>
           <Icon name="lock" size={18} color={palette.muted} />
           <Text style={styles.small}>Only for this talk, on this phone.</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (open && learned) {
+    return (
+      <View style={styles.card}>
+        <View style={styles.head}>
+          <Icon name="circle-check" size={24} color={palette.idle} />
+          <Text style={styles.title}>Their voice was learned</Text>
+        </View>
+        <Text style={styles.text}>
+          From what they said: other voices are left out now. If their words stop coming, it was someone else’s: tap Not them.
+        </Text>
+        {people.length > 0 && (
+          <View style={styles.others}>
+            <Text style={styles.label}>Talking with one of them?</Text>
+            <People people={people} onChoose={choose} />
+          </View>
+        )}
+        <View style={styles.buttons}>
+          <CompactButton
+            label="Not them"
+            icon="x"
+            accessibilityLabel="Not them: forget the voice learned, and learn theirs again"
+            onPress={forget}
+            style={styles.button}
+          />
+          <CompactButton label="Record" icon="mic" accessibilityLabel="Record their voice" onPress={record} style={styles.button} />
+          <CompactButton label="Save" icon="check" accessibilityLabel="Save their voice" onPress={onSave} style={styles.button} />
+          <CompactButton label="Close" onPress={() => setOpen(false)} style={styles.button} />
         </View>
       </View>
     );
@@ -204,18 +244,7 @@ function VoicesCard({ session, voices, onSave }: VoicesBarProps & { onSave(): vo
         <Icon name="check" size={18} color={palette.live} />
         <Text style={[styles.chipText, { color: palette.live }]}>You</Text>
       </View>
-      {!recorded ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={people.length > 0 ? 'Choose who you are talking with' : 'Record their voice'}
-          onPress={people.length > 0 ? () => setOpen(true) : record}
-          hitSlop={6}
-          style={({ pressed }) => [styles.chip, styles.action, pressed && styles.pressed]}
-        >
-          <Icon name={people.length > 0 ? 'users' : 'mic'} size={18} color={palette.accent} />
-          <Text style={[styles.chipText, { color: palette.accent }]}>{people.length > 0 ? 'Choose them' : 'Record them'}</Text>
-        </Pressable>
-      ) : (
+      {recorded ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={name ? `Talking with ${name}` : 'Their voice is recorded'}
@@ -228,6 +257,30 @@ function VoicesCard({ session, voices, onSave }: VoicesBarProps & { onSave(): vo
           <Text style={[styles.chipText, { color: palette.live }]} numberOfLines={1}>
             {name ?? 'Them'}
           </Text>
+        </Pressable>
+      ) : learned ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Their voice was learned"
+          accessibilityHint="Shows more, and lets you record it, or say it is not them"
+          onPress={() => setOpen(true)}
+          hitSlop={6}
+          style={({ pressed }) => [styles.chip, styles.learned, pressed && styles.pressed]}
+        >
+          <Icon name="check" size={18} color={palette.idle} />
+          <Text style={[styles.chipText, { color: palette.idle }]}>Them · learned</Text>
+        </Pressable>
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Their voice is being learned"
+          accessibilityHint="Shows more, and lets you record it instead"
+          onPress={() => setOpen(true)}
+          hitSlop={6}
+          style={({ pressed }) => [styles.chip, styles.learning, pressed && styles.pressed]}
+        >
+          <Icon name="audio-lines" size={18} color={palette.busy} />
+          <Text style={[styles.chipText, { color: palette.busy }]}>Them · learning</Text>
         </Pressable>
       )}
     </View>
@@ -349,6 +402,12 @@ const useStyles = themedStyles((palette) => ({
   },
   known: {
     backgroundColor: palette.liveSoft,
+  },
+  learned: {
+    backgroundColor: palette.idleSoft,
+  },
+  learning: {
+    backgroundColor: palette.busySoft,
   },
   action: {
     borderWidth: 2,

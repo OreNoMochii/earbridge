@@ -127,13 +127,13 @@ export interface VoicesView {
   recording: { seconds: number; of: number; hint: RecordingProblem | undefined } | undefined;
   /** Why the last recording of their voice did not work, until put away. */
   failed: RecordingProblem | undefined;
-  /** The offer to record their voice was put away. */
+  /** The offer to choose them among people whose voices were saved was put away. */
   dismissed: boolean;
   /** Who they are, when their voice is one saved on the phone. */
   name: string | undefined;
   /** Their voice was just recorded: offer to save it for the next talks. */
   offerSave: boolean;
-  /** People whose voices are saved on the phone, to choose instead of recording. */
+  /** People whose voices are saved on the phone, to choose instead of learning or recording theirs. */
   people: SavedPerson[];
 }
 
@@ -205,8 +205,9 @@ export class LiveSession {
   private report: TalkReport | undefined;
   /** My voice print, when the microphone may keep only our voices (see updateIsolation). */
   private myPrint: Float32Array | undefined;
-  /** The microphone keeps only our voices, as asked. */
+  /** The microphone keeps only our voices, as asked, with this many voice prints. */
   private isolating = false;
+  private keptPrints = 0;
   private toldSeparating = false;
   private connectionState: ConnectionState = 'connecting';
   /** What the engine is getting ready, e.g. a language download. */
@@ -653,6 +654,8 @@ export class LiveSession {
       this.toSpeak.add(message.id);
       this.queue.expect(message.id);
     }
+    // A line may have taught how one of the two voices sounds here (see updateIsolation).
+    this.updateIsolation();
   }
 
   private onSkipped(message: SkippedMessage): void {
@@ -728,6 +731,7 @@ export class LiveSession {
     const recording = progress && { seconds: progress.seconds, of: progress.of, hint: progress.hint };
     // Newly recorded: someone not saved, or not yet.
     const recorded = !!before?.recording && !recording && !message.failed && message.partner === 'recorded';
+    if (before?.partner === 'unknown' && message.partner === 'learned') this.toast('Their voice is learned.');
     this.update({
       voices: {
         partner: message.partner,
@@ -752,20 +756,29 @@ export class LiveSession {
   }
 
   /**
-   * Once both voices are known, and theirs is not being recorded, the microphone keeps
-   * only those two in what it sends; until then, everything.
+   * Once both voices are known, theirs learned from what they said or recorded, and theirs
+   * is not being recorded, the microphone keeps only those two in what it sends; until
+   * then, everything. Learned afresh (see onVoices), it keeps the new voice. Each voice as
+   * heard here, once learned, counts too: a voice can be less like its recording, made
+   * somewhere else, than like itself here; learned further from most lines, it is looked
+   * up again as each is delivered. As it hides the other voices, a voice learned by
+   * mistake leaves no skipped line to tap: "Not them" (forgetPartner) puts it right.
    */
   private updateIsolation(): void {
     const mic = this.mic;
     if (!mic || this.ended) return;
     const voices = this.state.voices;
-    const theirs = voices?.partner === 'recorded' && !voices.recording ? this.backend?.partnerVoice?.() : undefined;
+    const known = voices !== undefined && !voices.recording && (voices.partner === 'learned' || voices.partner === 'recorded');
+    const theirs = known ? this.backend?.partnerVoice?.() : undefined;
+    const here = known ? (this.backend?.voicesHere?.() ?? []) : [];
     const kept: KeptVoices | undefined =
-      this.separatesVoices() && this.myPrint && theirs ? { model: VOICE_MODEL_FILE, prints: [this.myPrint, theirs] } : undefined;
+      this.separatesVoices() && this.myPrint && theirs ? { model: VOICE_MODEL_FILE, prints: [this.myPrint, theirs, ...here] } : undefined;
     if (!mic.isolate(kept)) return;
-    if (this.isolating !== (kept !== undefined)) {
+    const prints = kept?.prints.length ?? 0;
+    if (this.isolating !== (kept !== undefined) || prints !== this.keptPrints) {
       this.isolating = kept !== undefined;
-      this.report?.note({ type: 'isolation', asked: this.isolating });
+      this.keptPrints = prints;
+      this.report?.note({ type: 'isolation', asked: this.isolating, prints });
     }
   }
 
@@ -880,7 +893,7 @@ export class LiveSession {
     this.updateMic();
   }
 
-  /** Puts away the offer to record their voice, or what says a recording did not work. */
+  /** Puts away the offer to choose them among saved people, or what says a recording did not work. */
   dismissVoices(): void {
     const voices = this.state.voices;
     if (!this.ended && voices) this.update({ voices: { ...voices, dismissed: true, failed: undefined } });
@@ -903,8 +916,21 @@ export class LiveSession {
   }
 
   /**
-   * Saves their voice as recorded in this talk on the phone, under their name, for the
-   * next talks. Only with their OK. False if it could not be saved.
+   * One phone: the voice learned for them is someone else's, so it is forgotten, and theirs
+   * is learned afresh as they talk. Every voice is heard again meanwhile.
+   */
+  forgetPartner(): void {
+    const voices = this.state.voices;
+    if (this.ended || this.connectionState !== 'ready' || voices?.partner !== 'learned') return;
+    this.update({ voices: { ...voices, partner: 'unknown' } });
+    this.backend?.send({ type: 'forget-voice' });
+    this.updateIsolation();
+    this.toast('Their voice is learned again as they talk.');
+  }
+
+  /**
+   * Saves their voice as recorded or learned in this talk on the phone, under their name,
+   * for the next talks. Only with their OK. False if it could not be saved.
    */
   async savePartner(name: string): Promise<boolean> {
     const print = this.backend?.partnerVoice?.();
@@ -915,6 +941,8 @@ export class LiveSession {
       if (voices && !this.ended) {
         const people = [person, ...voices.people.filter((other) => other.id !== person.id)];
         this.update({ voices: { ...voices, name: person.name, offerSave: false, people } });
+        // Theirs for sure now, as when chosen among saved people.
+        if (voices.partner === 'learned') this.backend?.usePartnerVoice?.(print);
       }
       return true;
     } catch {

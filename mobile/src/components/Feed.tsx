@@ -187,7 +187,6 @@ const Bubble = memo(function Bubble({ entry }: { entry: FeedEntry }) {
 const SKIP_REASONS: Readonly<Record<Exclude<SkipReason, 'language'>, string>> = {
   distant: 'far away',
   voice: 'another voice',
-  unrecorded: 'voice not recorded',
   short: 'too short to tell',
   untimed: 'voice not checked',
   direction: 'from the side',

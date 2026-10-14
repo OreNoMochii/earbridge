@@ -55,9 +55,6 @@
               "exclude": [
                 "**/libsherpa-onnx-c-api.so",
                 "**/libsherpa-onnx-cxx-api.so"
-              ],
-              "pickFirst": [
-                "**/libonnxruntime.so"
               ]
             }
           }

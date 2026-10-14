@@ -68,11 +68,17 @@ export type ClientMessage =
   | { type: 'accept'; id: string }
   /**
    * solo, while only the two people's voices are translated: record the other person's
-   * voice from what the microphone hears next, for this conversation only.
+   * voice from what the microphone hears next, for this conversation only, instead of
+   * learning it from what they say.
    */
   | { type: 'record-voice' }
   /** Stop recording their voice, keeping what was known of it before. */
   | { type: 'stop-recording' }
+  /**
+   * solo: the voice learned for the other person is someone else's: forget it, never take
+   * it for theirs again, and learn theirs afresh from what is said for them.
+   */
+  | { type: 'forget-voice' }
   /** solo: holding a button, whoever talks says it is them, so no noisy-place filter skips it. */
   | { type: 'talk-mode'; mode: TalkMode };
 
@@ -97,8 +103,6 @@ export type SkipReason =
   | 'distant'
   /** Neither of the two voices of the conversation. */
   | 'voice'
-  /** Said for the other person, not in my voice, while theirs is not recorded: only recorded voices are translated. */
-  | 'unrecorded'
   /** Too short to tell whose voice it is, while only the two voices are translated. */
   | 'short'
   /** The recognizer did not say when it was said, so whose voice it is could not be checked. */
@@ -108,8 +112,10 @@ export type SkipReason =
 
 /** solo: how the other person's voice is known, while only the two people's are translated. */
 export type PartnerVoice =
-  /** Not yet: until it is recorded, only my voice is translated. */
+  /** Not yet: until it is, whatever is said for them is translated, and their voice learned from it. */
   | 'unknown'
+  /** From what was said for them in this conversation: the voice that kept coming back. */
+  | 'learned'
   /** From a recording made for this conversation (`record-voice`), or saved from an earlier one. */
   | 'recorded';
 
@@ -176,7 +182,8 @@ export type ServerMessage =
   | { type: 'speech'; id: string; lang: string; audio: string[]; error?: string }
   /**
    * solo, while only the two people's voices are translated: how the other person's voice
-   * is known, sent at the start and whenever that changes. `recording` while their voice
+   * is known, sent at the start and whenever that changes, and again when their voice is
+   * learned afresh (see `accept`), as the phone may keep only voices like it. `recording` while their voice
    * is being recorded: `seconds` of it so far, `of` the seconds needed, and maybe a
    * `hint` of what is going wrong. `failed` once, when a recording did not work.
    */

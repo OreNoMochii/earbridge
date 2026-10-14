@@ -158,7 +158,7 @@ export function VoiceRecorder({ them, earphoneMic, save, onDone, onClose }: Voic
           },
           done: (failed) => {
             if (failed) fail(THEIRS_FAILED[failed].title, THEIRS_FAILED[failed].message);
-            else void finish(async () => voices.recordedPartner);
+            else void finish(async () => voices.partnerPrint);
           },
         },
         consoleLogger,

@@ -37,8 +37,8 @@ export type PhoneReportEntry =
       >;
     }
   | { type: 'mic'; input: CaptureInput }
-  /** Keeping only our voices in what the microphone sends: asked for (`asked`), or as the phone says. */
-  | ({ type: 'isolation'; asked?: boolean } & Partial<IsolationEvent>)
+  /** Keeping only our voices in what the microphone sends: asked for (`asked`), with this many voice `prints`, or as the phone says. */
+  | ({ type: 'isolation'; asked?: boolean; prints?: number } & Partial<IsolationEvent>)
   /** How a stretch of sound was split into voices, and which were kept. */
   | ({ type: 'separation' } & SeparationEvent)
   | { type: 'end'; reason?: string };

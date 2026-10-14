@@ -76,6 +76,8 @@ export class InAppBackend implements Backend {
       solo.recordPartner();
     } else if (message.type === 'stop-recording') {
       solo.stopRecording();
+    } else if (message.type === 'forget-voice') {
+      solo.forgetPartner();
     } else if (message.type === 'talk-mode') {
       solo.setTalkMode(message.mode);
     }
@@ -91,6 +93,10 @@ export class InAppBackend implements Backend {
 
   partnerVoice(): Float32Array | undefined {
     return this.solo?.partnerPrint;
+  }
+
+  voicesHere(): Float32Array[] {
+    return this.solo?.voicesHere ?? [];
   }
 
   stop(): void {

@@ -453,4 +453,6 @@ MIT
 The Android app includes a voice separation model, `convtasnet.onnx`: Conv-TasNet by Joris Cosentino, trained with
 Asteroid on Libri2Mix ([JorisCos/ConvTasNet_Libri2Mix_sepnoisy_16k](https://huggingface.co/JorisCos/ConvTasNet_Libri2Mix_sepnoisy_16k)),
 licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). It was converted to ONNX, with its
-convolutions quantized to 8 bits, and the converted file is under the same license.
+convolutions quantized to 8 bits, and the converted file is under the same license. The model runs on
+[ONNX Runtime](https://github.com/microsoft/onnxruntime) (MIT): the runtime that comes with sherpa-onnx, and the Java
+library of the same build, in `mobile/modules/earbridge-audio/android/` (`libs/get-onnxruntime-java.sh` there gets it).

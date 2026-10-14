@@ -25,9 +25,13 @@ dependencies {
   // front end, about 27 MB on arm64. The model downloads at first use. Only the Android
   // library: `com.github.k2-fsa:sherpa-onnx` would bring the desktop ones too.
   implementation 'com.github.k2-fsa.sherpa-onnx:sherpa-onnx:v1.13.8'
-  // Separating voices (VoiceIsolator): ONNX Runtime's Java API. sherpa-onnx brings the
-  // runtime itself (1.28.2) and this one its own (1.28.0): the app keeps one of the two
-  // (app.json, pickFirsts), which both can use. Not 1.29: sherpa-onnx is built for 1.28.
-  implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.28.0'
+  // Separating voices (VoiceIsolator): ONNX Runtime's Java API, of exactly the version of
+  // the runtime sherpa-onnx bundles (1.28.2): the runtime's symbols carry their version, so
+  // another version's Java library can't load against it, and Maven Central's
+  // onnxruntime-android has no 1.28.2. libs/get-onnxruntime-java.sh takes the Java part of
+  // the same 1.28.2 build: this jar, and the JNI library in src/main/jniLibs. The runtime
+  // itself comes with sherpa-onnx only. When sherpa-onnx changes, check the runtime version
+  // it bundles and get the Java library of that version.
+  implementation files('libs/onnxruntime-1.28.2.jar')
   testImplementation 'junit:junit:4.13.2'
 }

@@ -61,12 +61,17 @@ export type TalkReportEntry =
   /** A line's voice, piece by piece: which parts of it were in whose voice. */
   | { type: 'windows'; id: string; windows: VoiceWindow[] }
   | { type: 'translation'; id: string; text: string }
-  /** A skipped line translated after all: the user asked, or it is in the voice just recorded. */
-  | { type: 'translated-after-all'; id: string; why: 'asked' | 'recorded' }
+  /**
+   * A skipped line translated after all: the user asked, or it is in their voice as just
+   * recorded or picked, or learned afresh from a line the user asked for.
+   */
+  | { type: 'translated-after-all'; id: string; why: 'asked' | 'recorded' | 'learned' }
   | { type: 'speaker'; selection: SpeakerSelection }
   | { type: 'talk-mode'; mode: TalkMode }
   | { type: 'voices'; partner: PartnerVoice; recording?: { seconds: number; of: number; hint?: RecordingProblem }; failed?: RecordingProblem }
   /** The place turned out too loud for the filters: holding a button was suggested. */
-  | { type: 'loud' };
+  | { type: 'loud' }
+  /** What I said while holding the button sounded nothing like my recording: recording it again was suggested. */
+  | { type: 'unlike-recording' };
 
 export type TalkReporter = (entry: TalkReportEntry) => void;

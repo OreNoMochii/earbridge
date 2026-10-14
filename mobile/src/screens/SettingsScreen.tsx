@@ -172,14 +172,14 @@ export function SettingsScreen({ settings, onChange, onDone, onKeys, onVoices, c
           />
           <SwitchRow
             title="Only our two voices"
-            description={`Shows and translates only recorded voices: yours, and theirs once recorded.${notHere}`}
+            description={`Shows and translates only you two: your recorded voice, and theirs, learned as they talk.${notHere}`}
             value={voices && myVoice && settings.onlyOurVoices}
             disabled={!voices}
             onChange={setOnlyOurVoices}
           />
           <SwitchRow
             title="Separate voices"
-            description="Takes other voices out before writing. Words come a bit later."
+            description="Once their voice is learned or recorded, takes other voices out before writing. Words come a bit later."
             value={voices && myVoice && settings.onlyOurVoices && settings.separateVoices}
             disabled={!voices || !myVoice || !settings.onlyOurVoices}
             onChange={(separateVoices) => onChange({ separateVoices })}

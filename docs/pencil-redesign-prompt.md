@@ -182,9 +182,9 @@ One scrolling page of section titles and choices, with no boxes around the secti
 - **Hear translations:** the two choices from setup step 4.
 - **Noisy places** (one phone only):
   - Switch "Ignore far-away voices": "Skips other tables, TV, radio".
-  - Switch "Only our two voices": "Shows and translates only you two. Needs Online." Turning it on the first time opens Record your voice (screen 6).
+  - Switch "Only our two voices": "Shows and translates only you two: your recorded voice, and theirs, learned as they talk." Turning it on the first time opens Record your voice (screen 6).
   - When a voice is saved: "✓ Your voice is saved on this phone", with "Record again" and "Delete".
-  - One line under it: "Theirs is recorded in each talk, and forgotten when it ends."
+  - One line under it: "Theirs is learned in each talk, and forgotten when it ends, unless you save it."
   - One muted line: "Skipped by mistake? Tap Translate on it."
   - With On this phone, the section is greyed out with the reason: "Not with On this phone. Hold to talk helps in noise."
 - **More options:** collapsed, with "Show" / "Hide".
@@ -236,13 +236,15 @@ How the 360 × 800 height is shared:
   - The pill says "Listening" (live), "Speaking" (speaking), "Paused" (idle), or "Connecting…", "Getting ready…" or "Reconnecting…" (busy).
   - While something downloads, a thin progress line under the bar says "Downloading Japanese… 40%".
   - Android Back asks "End the conversation?" ("The words on screen go away.") with "Keep talking" and "End".
-- **"Voices" row,** only with "Only our two voices" on, so you can see both voices are known:
-  - A 14 px "Voices" label, then pill chips 36 px tall (48 px to touch): "✓ You" on a soft green tint, then "✓ Them" (recorded), "✓ Them · learned" (grey, learned from the first thing they said) or "🎤 Record them" (outlined in the accent colour).
-  - Tapping "Them" opens a small card: "Their voice is recorded" / "Only for this talk. It is forgotten when you end." with "Record again" and "Close". When learned: "Their voice was learned" / "From the first thing they said. Record it to be sure." with "Record" and "Close".
-  - At the start, until their voice is known, a card takes the row's place: "Record their voice" / "So only you two are translated. Ask them to say a few words.", with "Record" and "Not now", and a lock line "Only for this talk, on this phone."
+- **"Voices" row,** only with "Only our two voices" on, so you can see both voices are known. Nobody has to record their voice first: it is learned as they talk.
+  - A 14 px "Voices" label, then pill chips 36 px tall (48 px to touch): "✓ You" on a soft green tint, then "🔊 Them · learning" (amber tint, until their voice is learned), "✓ Them · learned" (grey tint, learned from what they said), or "✓ Them" or their saved name, like "✓ Maria" (green, recorded or saved).
+  - At the start, only when people are saved, a card takes the row's place: "Who are you talking with?", their names as chips outlined in the accent colour, and "Someone new" (their voice is then learned as they talk).
+  - Tapping "Them · learning" opens a small card: "Learning their voice" / "It is learned as they talk. Until then, other people’s words may be translated too.", then "Talking with one of them?" with the saved names, "Record" and "Close", and a lock line "Only for this talk, on this phone."
+  - When it is learned, the toast "Their voice is learned." Tapping "Them · learned": "Their voice was learned" / "From what they said: other voices are left out now. If their words stop coming, it was someone else’s: tap Not them.", the saved names, and "Not them", "Record", "Save" and "Close". "Not them" forgets it: the chip goes back to "Them · learning", with the toast "Their voice is learned again as they talk."
+  - Tapping "Them": "Their voice is recorded" / "Only for this talk, unless you save it." with "Record", "Save" and "Close". For a saved person: "Talking with Maria" / "Their saved voice is used.", "Someone else?" with the other names, and "Record" and "Close".
   - While recording, a card: a mic icon, "Recording their voice" and "3 / 6 s", a green progress bar, and "Let them talk. You stay quiet." with a compact "Cancel". When it goes wrong, the line turns red and bold: "That sounded like you. Let them talk." or "Can’t hear them well. Hold the phone closer to them." The microphone stays on while it records, even in hold to talk.
   - If it did not work: "Couldn’t record their voice" with "It heard mostly your voice. Let them talk, you stay quiet." (or "Too little of their voice was heard. Hold the phone closer to them."), and "Try again" and "Close".
-  - When it worked: the toast "Their voice is recorded." and the row shows "✓ You ✓ Them".
+  - When it worked: "Their voice is recorded" / "Save it for your next talks? Only with their OK." with "Save" and "No", then the row shows "✓ You ✓ Them".
 - **"For them" panel,** about 200 to 240 px tall:
   - A small label, "For them · 日本語".
   - A compact "Turn around" button. It turns the whole panel upside down for someone sitting across.
@@ -324,7 +326,7 @@ These frames are 360 px wide too, in both themes. They show:
 - The microphone permission message.
 - "Downloading Japanese for on-phone translation… 40%", and its failure: "Couldn't download Japanese. Connect to the internet once, then try again."
 - Disabled choices with their reasons.
-- The "Voices" row in each state: "Record them", "✓ Them · learned", "✓ Them", and the record, recording (with and without a red hint), and failed cards.
+- The "Voices" row in each state: "Them · learning", "✓ Them · learned", "✓ Them", "✓ Maria", and the who-are-you-talking-with, learning, learned, recording (with and without a red hint), failed and save cards.
 
 ## Deliverables
 
@@ -334,7 +336,7 @@ These frames are 360 px wide too, in both themes. They show:
    - status bar, top bar, and buttons (primary, secondary, danger, compact)
    - choice card, switch row, section title, language row and setup chip
    - chat bubbles: mine, theirs, skipped and live caption
-   - the "Voices" row and its cards: record their voice, recording, failed, recorded
+   - the "Voices" row and its cards: who are you talking with, learning, learned, recording, failed, recorded, save
    - the "For them" panel, status pill, segmented control, hold button and microphone line
    - toast, banner and dialog
 4. Screens 1 to 10 in light, left to right in the order of use, 80 px apart.

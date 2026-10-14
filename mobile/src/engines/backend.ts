@@ -28,4 +28,6 @@ export interface Backend {
   usePartnerVoice?(print: Float32Array): boolean;
   /** Their voice print as recorded in this conversation, e.g. to save it for the next. */
   partnerVoice?(): Float32Array | undefined;
+  /** The two voices as the phone hears them here, those learned so far, for keeping only voices like them. */
+  voicesHere?(): Float32Array[];
 }

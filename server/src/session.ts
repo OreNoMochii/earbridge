@@ -81,6 +81,9 @@ export class ClientSession {
       case 'stop-recording':
         this.solo?.stopRecording();
         return;
+      case 'forget-voice':
+        this.solo?.forgetPartner();
+        return;
       case 'talk-mode':
         if (message!['mode'] === 'handsfree' || message!['mode'] === 'hold') this.solo?.setTalkMode(message!['mode']);
         return;

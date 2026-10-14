@@ -16,7 +16,7 @@ import { deliverTranslation } from './translate/deliver.ts';
 import type { TranslationRequest, Translator } from './translate/types.ts';
 import { deliverSpeech } from './voice/deliver.ts';
 import type { SpeechSynthesizer } from './voice/types.ts';
-import { PartnerRecording, VoiceFilter } from './voices.ts';
+import { MIN_LEARN_SECONDS, PartnerRecording, VoiceFilter } from './voices.ts';
 import type { VoiceLikeness, VoicePrinter } from './voices.ts';
 
 export interface SoloOptions {
@@ -44,9 +44,10 @@ export interface SoloOptions {
    */
   nearbyOnly?: boolean;
   /**
-   * Skip speech in any voice but the two people's recorded ones: mine, and theirs once
-   * recorded (see `recordPartner`) or saved (see `usePartner`). Needs word timings too:
-   * speech the recognizer did not time is skipped, its voice unchecked.
+   * Skip speech in any voice but the two people's: mine as recorded, and theirs once it is
+   * recorded (see `recordPartner`), saved (see `usePartner`) or learned from what is said
+   * for them, which is not skipped for its voice until then. Needs word timings too: speech
+   * the recognizer did not time is skipped, its voice unchecked.
    */
   voices?: VoicePrinter;
   /**
@@ -139,9 +140,12 @@ const CAPTION_RECHECK_SECONDS = 1;
 const UNTIMED_TOLD_AFTER = 2;
 const NO_TIMINGS = 'The noisy-place filters can’t work with this speech recognition, so everything is translated.';
 const NO_TIMINGS_VOICES = 'Voices can’t be checked with this speech recognition: tap Translate on a line to translate it.';
+const UNLIKE_RECORDING = 'Your voice sounds unlike your recording of it here: tap the lines that are yours, or record it again in Settings.';
+/** Lines said for me while holding the button, in a row and long enough to tell, in a voice nothing like mine as recorded: told after this many. */
+const UNLIKE_TOLD_AFTER = 2;
 /**
- * Once their voice is recorded, what was skipped this many seconds before for not being in
- * a recorded voice is checked again: what they said while it was recorded is translated too.
+ * Once their voice is recorded or picked, what was skipped this many seconds before for its
+ * voice is checked again: what they said while it was recorded is translated too.
  */
 const RECHECK_SECONDS = 60;
 
@@ -150,7 +154,8 @@ const RECHECK_SECONDS = 60;
  * "auto" it recognizes both languages and attributes each utterance by the language it
  * detected; otherwise it expects one side's language and attributes everything to them.
  * Speech in another language, and optionally from further away, from the phone's sides or
- * in voices not recorded, is skipped rather than translated, and its words are not shown.
+ * in neither of the two people's voices, is skipped rather than translated, and its words
+ * are not shown.
  */
 export class SoloConversation {
   readonly autoDetect: boolean;
@@ -172,6 +177,12 @@ export class SoloConversation {
   private recording: PartnerRecording | undefined;
   /** The last `voices` message sent. */
   private reportedVoices = '';
+  /** Their voice print as of it: told again when theirs was learned afresh, as the phone may keep only voices like it. */
+  private reportedPrint: Float32Array | undefined;
+  /** Lines said for me while holding the button, in a row, in a voice nothing like mine as recorded. */
+  private unlikeMine = 0;
+  /** Told the phone that my voice here sounds unlike its recording. */
+  private toldUnlike = false;
   /** Voice checks take a moment; utterances wait for the ones before them, to stay in order. */
   private checks: Promise<void> = Promise.resolve();
   /** Utterances waiting for their voice check, which checks of live captions give way to. */
@@ -267,11 +278,14 @@ export class SoloConversation {
       if (reason === 'direction') this.directions?.correct(speakerId, heading);
       else this.directions?.learn(speakerId, heading);
     }
-    // That voice just sounds different here; no voice that was not recorded is learned.
-    if (voice) this.voices?.learn(speakerId, voice.print, voice.seconds);
+    // That voice just sounds different here, or theirs was learned from someone else's.
+    const theirs = this.voices?.partnerPrint;
+    if (voice) this.voices?.translated(speakerId, voice.print, voice.seconds);
     this.hearMargin(speakerId, skipped.margin);
     this.options.report?.({ type: 'translated-after-all', id, why: 'asked' });
     this.deliver(id, speakerId, skipped.text, skipped.lang);
+    this.reportVoices();
+    if (theirs && this.voices?.partnerPrint !== theirs) this.recheckTheirs();
   }
 
   /**
@@ -288,7 +302,7 @@ export class SoloConversation {
         done: (failed) => {
           this.recording = undefined;
           this.reportVoices(failed);
-          if (!failed) this.recheckUnrecorded();
+          if (!failed) this.recheckTheirs();
         },
       },
       this.options.log,
@@ -314,13 +328,30 @@ export class SoloConversation {
     this.recording?.stop();
     this.recording = undefined;
     this.reportVoices();
-    this.recheckUnrecorded();
+    this.recheckTheirs();
     return true;
   }
 
-  /** Their voice print as recorded in this conversation (or saved), e.g. to save it for the next. */
+  /**
+   * The voice learned for them is someone else's, the phone says: it is forgotten and
+   * skipped from now on, and theirs is learned afresh from what is said for them.
+   */
+  forgetPartner(): void {
+    if (!this.voices || this.closed || !this.voices.rejectPartner()) return;
+    this.reportVoices();
+  }
+
+  /** Their voice print as recorded, saved or learned in this conversation, e.g. to save it for the next. */
   get partnerPrint(): Float32Array | undefined {
-    return this.voices?.recordedPartner;
+    return this.voices?.partnerPrint;
+  }
+
+  /**
+   * The two voices as the phone hears them here, those learned so far: for keeping only
+   * voices like them, as each may sound less like its recording than like this.
+   */
+  get voicesHere(): Float32Array[] {
+    return this.voices?.printsHere ?? [];
   }
 
   close(): void {
@@ -440,6 +471,12 @@ export class SoloConversation {
     const speech = this.speech;
     speech.speakerId = speakerId;
     speech.text = text;
+    // Until their voice is known, what is said for them shows as it will be translated: from
+    // anywhere but a side of the phone, unless whoever talks holds a button.
+    if (!this.voices.checks(speakerId)) {
+      this.showInterim(speakerId, held || !this.fromTheSide(heading) ? text : '');
+      return;
+    }
     this.showInterim(speakerId, speech.ours ? text : '');
     if (!speech.ours && samples) {
       this.checkCaption(speech, samples).catch((error: unknown) => this.options.log.warn('voice check', error));
@@ -561,15 +598,20 @@ export class SoloConversation {
       this.report(heard, speakerId, { ...measured, reason: 'direction' });
       return;
     }
-    // Only in one of the two recorded voices, even from where one of us sits. Not speech too
-    // short to tell, nor speech the recognizer did not time.
-    if (this.voices && !(voice && this.voices.admits(speakerId, voice.print, voice.seconds))) {
-      const unrecorded = speakerId === SOLO_THEM && this.voices.partner === 'unknown';
-      const reason = !samples ? 'untimed' : !voice ? 'short' : unrecorded ? 'unrecorded' : 'voice';
+    // Only in one of the two voices, even from where one of us sits: not speech too short to
+    // tell, nor speech the recognizer did not time. Until their voice is known, anything said
+    // for them, which it is learned from.
+    const voices = this.voices;
+    if (voices && !(voice ? voices.admits(speakerId, voice.print, voice.seconds, held) : !voices.checks(speakerId))) {
+      const reason = !samples ? 'untimed' : !voice ? 'short' : 'voice';
       this.skip(id, { speakerId, lang, text, reason, level, heading, voice, margin });
       this.report(heard, speakerId, { ...measured, reason });
+      if (held && speakerId === SOLO_ME && voice && reason === 'voice' && voice.seconds >= MIN_LEARN_SECONDS) this.hearUnlike();
       return;
     }
+    if (speakerId === SOLO_ME) this.unlikeMine = 0;
+    // In case their voice was just learned from it.
+    this.reportVoices();
     if (!held) this.learnOurs(speakerId, { level, heading, margin }, now);
     this.deliver(id, speakerId, text);
     this.report(heard, speakerId, measured);
@@ -656,20 +698,35 @@ export class SoloConversation {
   }
 
   /**
-   * Their voice was just recorded, or picked: what was skipped lately for not being in a
-   * recorded voice is translated after all if it is theirs, in the order it was said.
+   * Their voice was just recorded or picked, or learned afresh from what the user said was
+   * theirs: what was skipped lately for its voice is translated after all if it is theirs,
+   * in the order it was said.
    */
-  private recheckUnrecorded(): void {
+  private recheckTheirs(): void {
+    const voices = this.voices;
+    if (!voices || voices.partner === 'unknown') return;
+    const why = voices.partner;
     const since = this.place.now - RECHECK_SECONDS;
     for (const [id, skipped] of this.skipped) {
       const { speakerId, voice } = skipped;
-      if (skipped.reason !== 'unrecorded' || skipped.at < since || !voice) continue;
-      if (!this.voices?.admits(speakerId, voice.print, voice.seconds)) continue;
+      if (speakerId !== SOLO_THEM || skipped.reason !== 'voice' || skipped.at < since || !voice) continue;
+      if (!voices.admits(speakerId, voice.print, voice.seconds, this.talkMode === 'hold')) continue;
       this.skipped.delete(id);
       if (this.talkMode !== 'hold') this.learnOurs(speakerId, skipped, this.place.now);
-      this.options.report?.({ type: 'translated-after-all', id, why: 'recorded' });
+      this.options.report?.({ type: 'translated-after-all', id, why });
       this.deliver(id, speakerId, skipped.text, skipped.lang);
     }
+  }
+
+  /**
+   * Tells the phone, once, when what I say while holding the button is nothing like my
+   * voice as recorded: recorded somewhere else, it may be too unlike my voice here to tell.
+   */
+  private hearUnlike(): void {
+    if (this.toldUnlike || ++this.unlikeMine < UNLIKE_TOLD_AFTER || this.closed) return;
+    this.toldUnlike = true;
+    this.options.send({ type: 'error', message: UNLIKE_RECORDING, fatal: false });
+    this.options.report?.({ type: 'unlike-recording' });
   }
 
   /**
@@ -686,7 +743,12 @@ export class SoloConversation {
     this.options.report?.({ type: 'loud' });
   }
 
-  /** Tells the phone how the other person's voice is known, when that changed or a recording `failed`. */
+  /**
+   * Tells the phone how the other person's voice is known, when that changed or a recording
+   * `failed`; again when their voice was learned afresh, as the phone may keep only voices
+   * like it. How either sounds here, learned further from most lines, the phone looks up as
+   * each is delivered (see `voicesHere`).
+   */
   private reportVoices(failed?: RecordingProblem): void {
     if (!this.voices || this.closed) return;
     const message = {
@@ -696,8 +758,10 @@ export class SoloConversation {
       ...(failed && { failed }),
     };
     const key = JSON.stringify(message);
-    if (key === this.reportedVoices) return;
+    const print = this.voices.partnerPrint;
+    if (key === this.reportedVoices && print === this.reportedPrint) return;
     this.reportedVoices = key;
+    this.reportedPrint = print;
     this.options.send(message);
     this.options.report?.(message);
   }

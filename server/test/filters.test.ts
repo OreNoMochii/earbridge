@@ -165,6 +165,10 @@ const VOICES: Record<number, number[]> = {
   8000: [0, 0.95, 0.3122],
   9000: [-0.3, 0.7, 0.648],
   10000: [0.3, 0.8, -0.52],
+  11000: [0.38, 0.8167, 0.4343],
+  12000: [0.38, 0.8167, -0.4343],
+  13000: [0.1, 0.95, 0.2956],
+  14000: [0.376, 0.5, -0.78],
 };
 const printer = {
   mine: new Float32Array(VOICES[1000]!),
@@ -174,26 +178,66 @@ const printer = {
   },
 };
 const print = (value: number) => new Float32Array(VOICES[value]!);
+/** A voice print to 3 decimals: learned ones are normalized, which moves them by a hair. */
+const rounded = (print: Float32Array) => [...print].map((value) => Number(value.toFixed(3)));
 
 describe('voices', () => {
-  it('lets only my voice through until theirs is recorded, and takes no other voice for theirs', () => {
+  it('lets whatever is said for them through until their voice is known, and learns theirs from it', () => {
     const voices = new VoiceFilter(printer);
     assert.equal(voices.admits('me', print(1000), 2), true);
-    assert.equal(voices.admits('them', print(1000), 2), true);
-    // Whoever talks for them is not taken for them, however long they talk.
-    assert.equal(voices.admits('them', print(2000), 2), false);
-    assert.equal(voices.admits('them', print(2000), 6), false);
-    assert.equal(voices.admits('me', print(3000), 2), false);
-    assert.equal(voices.recognizes(print(2000)), false);
+    assert.equal(voices.admits('me', print(3000), 2), false, 'what is said for me is in my voice');
     assert.equal(voices.partner, 'unknown');
-    voices.setPartner(print(2000));
-    assert.equal(voices.partner, 'recorded');
+    // Someone else now and then, and them again and again.
+    assert.equal(voices.admits('them', print(3000), 2), true);
+    assert.equal(voices.admits('them', print(2000), 2), true);
+    assert.equal(voices.admits('them', print(2000), 1), true, 'too short to learn from');
+    assert.equal(voices.admits('them', print(8000), 2), true, 'theirs, sounding a little different');
+    assert.equal(voices.partner, 'unknown', 'not yet as long as a recording of it');
+    assert.equal(voices.recognizes(print(2000)), false);
+    assert.equal(voices.admits('them', print(2000), 2), true);
+    assert.equal(voices.partner, 'learned');
     assert.equal(voices.admits('them', print(2000), 2), true);
     assert.equal(voices.admits('them', print(4000), 2), true, 'a similar voice');
     assert.equal(voices.admits('them', print(3000), 2), false);
+    assert.equal(voices.admits('them', print(1000), 2), true, 'mine, still');
     assert.equal(voices.admits('me', print(2000), 2), false, 'what is said for me is in my voice');
     assert.equal(voices.recognizes(print(2000)), true);
     assert.equal(voices.recognizes(print(2000), 'me'), false);
+  });
+
+  it('takes no voice for theirs while another is heard about as much', () => {
+    const voices = new VoiceFilter(printer);
+    for (let i = 0; i < 4; i++) {
+      assert.equal(voices.admits('them', print(2000), 2), true);
+      assert.equal(voices.admits('them', print(3000), 2), true);
+    }
+    assert.equal(voices.partner, 'unknown');
+  });
+
+  it('learns their voice when it is rather like mine, but never takes mine for theirs', () => {
+    const voices = new VoiceFilter(printer);
+    for (let i = 0; i < 3; i++) assert.equal(voices.admits('them', print(5000), 2), true);
+    assert.equal(voices.partner, 'learned');
+    assert.equal(voices.recognizes(print(5000), 'them'), true);
+    assert.equal(voices.admits('them', print(2000), 2), false);
+
+    // Mine, said for them in a loud place: each time too unclear to tell, but all together clearly mine.
+    const loud = new VoiceFilter(printer);
+    for (const value of [11000, 12000, 11000, 12000]) assert.equal(loud.admits('them', print(value), 2), true);
+    assert.equal(loud.partner, 'unknown');
+  });
+
+  it('learns their voice among many others, each heard now and then', () => {
+    // Voices nothing like each other: mine is the first.
+    const voice = (i: number) => Float32Array.from({ length: 12 }, (_, j) => (i === j ? 1 : 0));
+    const voices = new VoiceFilter({ mine: voice(0), print: async () => undefined });
+    // Strangers, each saying something once, and them now and then.
+    for (let i = 2; i < 12; i++) {
+      assert.equal(voices.admits('them', voice(i), 2), i <= 9, `the stranger ${i}`);
+      if (i % 3 === 0) assert.equal(voices.admits('them', voice(1), 2), true);
+      assert.equal(voices.partner, i < 9 ? 'unknown' : 'learned', `after the stranger ${i}`);
+    }
+    assert.deepEqual([...voices.partnerPrint!], [...voice(1)]);
   });
 
   it('takes their voice afresh from a new recording, forgetting how the last one sounded here', () => {
@@ -216,17 +260,98 @@ describe('voices', () => {
     assert.equal(voices.admits('them', print(10000), 2), false);
   });
 
-  it('learns their voice as heard here from what was translated after all, only once it is recorded', () => {
+  it('learns their voice as heard here from what was translated after all', () => {
     const voices = new VoiceFilter(printer);
-    voices.learn('them', print(3000), 2);
-    assert.equal(voices.admits('them', print(3000), 2), false, 'not recorded');
     voices.setPartner(print(3000));
     // Nothing like their recording: someone else, translated only to see what they said.
-    voices.learn('them', print(2000), 2);
+    voices.translated('them', print(2000), 2);
     assert.equal(voices.admits('them', print(2000), 2), false);
+    assert.equal(voices.partner, 'recorded', 'a recording stays');
     // Rather like it: them, sounding different here.
-    voices.learn('them', print(8000), 2);
+    voices.translated('them', print(8000), 2);
     assert.equal(voices.admits('them', print(2000), 2), true);
+  });
+
+  it('takes a voice translated after all for theirs, when the one learned was another', () => {
+    const voices = new VoiceFilter(printer);
+    // The radio, before they said anything.
+    for (let i = 0; i < 3; i++) voices.admits('them', print(3000), 2);
+    assert.equal(voices.partner, 'learned');
+    assert.equal(voices.admits('them', print(2000), 2), false);
+    voices.translated('them', print(2000), 1);
+    assert.equal(voices.admits('them', print(2000), 2), false, 'too short to tell');
+    voices.translated('them', print(2000), 2);
+    assert.equal(voices.partner, 'learned');
+    assert.deepEqual([...voices.partnerPrint!], [0, 1, 0]);
+    assert.equal(voices.admits('them', print(2000), 2), true);
+    assert.equal(voices.admits('them', print(3000), 2), false);
+
+    // Even one rather like the one learned.
+    const close = new VoiceFilter(printer);
+    for (let i = 0; i < 3; i++) close.admits('them', print(3000), 2);
+    assert.equal(close.admits('them', print(8000), 2), false);
+    close.translated('them', print(8000), 2);
+    assert.equal(close.admits('them', print(8000), 2), true);
+    assert.equal(close.admits('them', print(3000), 2), false);
+
+    // Theirs rather like mine, but never mine.
+    const like = new VoiceFilter(printer);
+    for (let i = 0; i < 3; i++) like.admits('them', print(2000), 2);
+    like.translated('them', print(7000), 2);
+    assert.deepEqual([...like.partnerPrint!], [0, 1, 0]);
+    assert.equal(like.admits('them', print(5000), 2), false);
+    like.translated('them', print(5000), 2);
+    assert.equal(like.admits('them', print(5000), 2), true);
+    assert.equal(like.admits('them', print(2000), 2), false);
+
+    // Until it is known, what was translated after all counts like the rest.
+    const unknown = new VoiceFilter(printer);
+    unknown.translated('them', print(2000), 2);
+    unknown.admits('them', print(2000), 2);
+    assert.equal(unknown.partner, 'unknown');
+    unknown.translated('them', print(2000), 2);
+    assert.equal(unknown.partner, 'learned');
+  });
+
+  it('forgets the voice learned when told it was someone else’s, skips it from then on, and learns theirs from any other', () => {
+    const voices = new VoiceFilter(printer);
+    assert.equal(voices.rejectPartner(), false, 'nothing learned yet');
+    // The radio, before they said anything.
+    for (let i = 0; i < 3; i++) voices.admits('them', print(3000), 2);
+    assert.equal(voices.partner, 'learned');
+    assert.equal(voices.admits('them', print(2000), 2), false);
+    assert.equal(voices.rejectPartner(), true);
+    assert.equal(voices.partner, 'unknown');
+    assert.equal(voices.partnerPrint, undefined);
+    assert.equal(voices.admits('them', print(3000), 2), false, 'the radio, from now on');
+    assert.equal(voices.admits('them', print(4000), 2), false, 'rather like it');
+    assert.equal(voices.admits('them', print(1000), 2), true, 'mine, still');
+    assert.equal(voices.admits('them', print(2000), 2), true, 'anyone else, until theirs is learned');
+    // The radio going on and on does not keep theirs from being learned.
+    for (let i = 0; i < 6; i++) assert.equal(voices.admits('them', print(3000), 2), false);
+    assert.equal(voices.partner, 'unknown');
+    for (let i = 0; i < 2; i++) assert.equal(voices.admits('them', print(2000), 2), true);
+    assert.equal(voices.partner, 'learned');
+    assert.deepEqual([...voices.partnerPrint!], [0, 1, 0]);
+    assert.equal(voices.admits('them', print(3000), 2), false);
+
+    // A recorded voice is replaced by recording it again, or picking them: not forgotten.
+    const recorded = new VoiceFilter(printer);
+    recorded.setPartner(print(2000));
+    assert.equal(recorded.rejectPartner(), false);
+    assert.equal(recorded.partner, 'recorded');
+  });
+
+  it('takes a voice it was told was not theirs for theirs after all, once something in it is translated after all', () => {
+    const voices = new VoiceFilter(printer);
+    for (let i = 0; i < 3; i++) voices.admits('them', print(3000), 2);
+    voices.rejectPartner();
+    assert.equal(voices.admits('them', print(3000), 2), false);
+    voices.translated('them', print(3000), 2);
+    assert.equal(voices.admits('them', print(3000), 2), true);
+    assert.equal(voices.partner, 'unknown', 'learned afresh, like any other voice');
+    voices.admits('them', print(3000), 2);
+    assert.equal(voices.partner, 'learned');
   });
 
   it('learns my voice as heard here from speech known to be mine some other way', () => {
@@ -258,6 +383,40 @@ describe('voices', () => {
     // Taken for mine only by how it sounded here: learning from it would drift toward other voices.
     assert.equal(voices.admits('me', print(5000), 2), true);
     assert.equal(voices.admits('me', print(9000), 2), false);
+  });
+
+  it('takes speech vouched for, by whoever holds the button, for that side’s when it is only somewhat like their voice', () => {
+    const voices = new VoiceFilter(printer);
+    // Mine, only somewhat like my recording, which was made somewhere else.
+    assert.equal(voices.admits('me', print(5000), 2), false, 'not clearly mine');
+    assert.equal(voices.admits('me', print(2000), 2, true), false, 'nothing like my voice, vouched for or not');
+    assert.equal(voices.admits('me', print(5000), 2, true), true);
+    assert.equal(voices.admits('me', print(5000), 2), true, 'learned as my voice here');
+    assert.equal(voices.recognizes(print(5000)), true);
+    assert.deepEqual(voices.printsHere.map(rounded), [[0.3, 0, 0.954]]);
+    // Someone else, nothing like my recording but a little like my voice here: not mine, vouched for or not.
+    assert.equal(voices.admits('me', print(13000), 2, true), false);
+    assert.deepEqual(voices.printsHere.map(rounded), [[0.3, 0, 0.954]], 'nothing learned from it');
+
+    // Theirs as recorded, only somewhat like their voice here.
+    const theirs = new VoiceFilter(printer);
+    theirs.setPartner(print(3000));
+    assert.deepEqual(theirs.printsHere, []);
+    assert.equal(theirs.admits('them', print(8000), 2), false, 'not clearly theirs');
+    assert.equal(theirs.admits('them', print(2000), 2, true), false, 'nothing like their voice');
+    assert.equal(theirs.admits('them', print(8000), 2, true), true);
+    assert.equal(theirs.admits('them', print(8000), 2), true, 'learned as their voice here');
+    assert.deepEqual(theirs.printsHere.map(rounded), [[0, 0.95, 0.312]]);
+    // Someone else, a little like their voice here but nothing like it as recorded: not theirs.
+    assert.equal(theirs.admits('them', print(14000), 2, true), false);
+    assert.deepEqual(theirs.printsHere.map(rounded), [[0, 0.95, 0.312]], 'nothing learned from it');
+    // Said for me, somewhat like my voice but clearly theirs: not mine, vouched for or not.
+    assert.equal(theirs.admits('me', print(11000), 2, true), false);
+
+    // Until their voice is known, what is said for them is let through anyway, and theirs learned from it.
+    const unknown = new VoiceFilter(printer);
+    assert.equal(unknown.admits('them', print(2000), 2, true), true);
+    assert.equal(unknown.partner, 'unknown');
   });
 
   it('makes no voice print of speech too short to tell whose it is', async () => {
@@ -872,25 +1031,106 @@ describe('one phone in a noisy place', () => {
     assert.equal(of('utterance').at(-1)?.text, 'So');
   });
 
-  it('translates speech in a voice not recorded when asked, without taking that voice for theirs', async () => {
+  it('translates whatever is said for them until their voice is known, which it learns from what they say', async () => {
     const { solo, stt, of, words } = soloSetup({ voices: printer });
-    solo.sendAudio(sound(2, 3000));
-    solo.sendAudio(sound(2, 3000));
-    stt.last.say('いらっしゃいませ', ['ja'], { start: 0, end: 2 });
-    await settle();
-    solo.accept(of('skipped')[0]!.id);
-    stt.last.say('どうぞ', ['ja'], { start: 2, end: 4 });
-    await settle();
+    const lines: [string, string[], number][] = [
+      ['こんにちは', ['ja'], 2000],
+      // Someone else now and then, translated too while their voice is not known.
+      ['いらっしゃいませ', ['ja'], 3000],
+      ['駅はどこですか', ['ja'], 2000],
+      ['Somebody else', ['en'], 3000],
+      ['まっすぐです', ['ja'], 2000],
+      // Their voice is known by now.
+      ['どうぞ', ['ja'], 3000],
+      ['ありがとう', ['ja'], 2000],
+    ];
+    for (const [i, [text, langs, voice]] of lines.entries()) {
+      solo.sendAudio(sound(2, voice));
+      stt.last.say(text, langs, { start: i * 2, end: i * 2 + 2 });
+      await settle();
+    }
     assert.deepEqual(
-      of('utterance').map((m) => m.text),
-      ['いらっしゃいませ'],
+      of('utterance').map((m) => [m.speakerId, m.text]),
+      [
+        ['them', 'こんにちは'],
+        ['them', 'いらっしゃいませ'],
+        ['them', '駅はどこですか'],
+        ['them', 'まっすぐです'],
+        ['them', 'ありがとう'],
+      ],
     );
     assert.deepEqual(
       of('skipped').map((m) => [words(m), m.reason]),
       [
-        ['いらっしゃいませ', 'unrecorded'],
-        ['どうぞ', 'unrecorded'],
+        ['Somebody else', 'voice'],
+        ['どうぞ', 'voice'],
       ],
+    );
+    assert.deepEqual(
+      of('voices').map((m) => m.partner),
+      ['unknown', 'learned'],
+    );
+  });
+
+  it('translates what is said for them too short to tell whose voice it is, or untimed, until their voice is known', async () => {
+    const { solo, stt, of, words } = soloSetup({ voices: printer });
+    solo.sendAudio(sound(2, 2000));
+    stt.last.say('こんにちは', ['ja'], { start: 0, end: 2 });
+    solo.sendAudio(sound(0.4, 2000));
+    stt.last.say('はい', ['ja'], { start: 2.1, end: 2.3 });
+    stt.last.say('ええ', ['ja']);
+    stt.last.say('So', ['en']);
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => m.text),
+      ['こんにちは', 'はい', 'ええ'],
+    );
+    assert.deepEqual(
+      of('skipped').map((m) => [words(m), m.reason]),
+      [['So', 'untimed']],
+    );
+  });
+
+  it('skips speech from the sides of the phone while their voice is not known, and learns nothing from it', async () => {
+    const { solo, stt, of, words, captions } = soloSetup({ voices: printer, directions: true });
+    const say = (i: number, text: string, langs: string[], delay: number, voice: number) => {
+      sendFrom(solo, delay, { seconds: 2, voice });
+      stt.last.say(text, langs, { start: i * 2, end: i * 2 + 2 });
+    };
+    say(0, 'Hello', ['en'], -5, 1000);
+    say(1, 'こんにちは', ['ja'], 5, 2000);
+    say(2, 'How are you?', ['en'], -5, 1000);
+    say(3, '元気です', ['ja'], 5, 2000);
+    await settle();
+    // A stranger beside the phone, on and on: not shown, even live.
+    for (let i = 4; i < 7; i++) {
+      sendFrom(solo, 0, { seconds: 2, voice: 3000 });
+      stt.last.hear('いらっしゃい', ['ja'], { start: i * 2, end: i * 2 + 1 });
+      stt.last.say('いらっしゃいませ', ['ja'], { start: i * 2, end: i * 2 + 2 });
+      await settle();
+    }
+    assert.deepEqual(captions(), []);
+    assert.deepEqual(
+      of('voices').map((m) => m.partner),
+      ['unknown'],
+    );
+    say(7, 'ありがとう', ['ja'], 5, 2000);
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => m.text),
+      ['Hello', 'こんにちは', 'How are you?', '元気です', 'ありがとう'],
+    );
+    assert.deepEqual(
+      of('skipped').map((m) => [words(m), m.reason]),
+      [
+        ['いらっしゃいませ', 'direction'],
+        ['いらっしゃいませ', 'direction'],
+        ['いらっしゃいませ', 'direction'],
+      ],
+    );
+    assert.deepEqual(
+      of('voices').map((m) => m.partner),
+      ['unknown', 'learned'],
     );
   });
 
@@ -919,25 +1159,40 @@ describe('one phone in a noisy place', () => {
     assert.deepEqual(captions(), ['Where is the', 'Where is the station']);
     assert.deepEqual(of('skipped').map((m) => [words(m), m.reason]), [['Somebody else here', 'voice']]);
 
-    // The other person: nothing either, until their voice is recorded.
-    solo.sendAudio(sound(4, 2000));
-    stt.last.hear('こんにちは', ['ja'], { start: 6, end: 7.5 });
+    // The other person: shown at once while their voice is not known, as all said for them is translated.
+    solo.sendAudio(sound(2, 2000));
+    stt.last.hear('こんにちは', ['ja'], { start: 6, end: 6.5 });
     await settle();
     stt.last.say('こんにちは', ['ja'], { start: 6, end: 8 });
     await settle();
-    assert.deepEqual(captions(), ['Where is the', 'Where is the station']);
-    assert.deepEqual(
-      of('utterance').map((m) => m.text),
-      ['Where is the station?'],
-    );
-    // Then they show, live too.
+    assert.deepEqual(captions(), ['Where is the', 'Where is the station', 'こんにちは']);
+
+    // Once it is known, someone else talking for them shows nothing either, however long;
+    // they show once there is enough of it to tell their voice.
     solo.usePartner(print(2000));
-    stt.last.hear('いい天気', ['ja'], { start: 8, end: 9.5 });
+    solo.sendAudio(sound(3, 3000));
+    for (const end of [9.5, 10, 10.5, 11]) {
+      stt.last.hear('いらっしゃいませ', ['ja'], { start: 8, end });
+      await settle();
+    }
+    stt.last.say('いらっしゃいませ', ['ja'], { start: 8, end: 11 });
     await settle();
-    assert.deepEqual(captions(), ['Where is the', 'Where is the station', 'いい天気']);
+    solo.sendAudio(sound(2, 2000));
+    stt.last.hear('いい', ['ja'], { start: 11, end: 12 });
+    await settle();
+    stt.last.hear('いい天気', ['ja'], { start: 11, end: 12.5 });
+    await settle();
+    assert.deepEqual(captions(), ['Where is the', 'Where is the station', 'こんにちは', 'いい天気']);
     assert.deepEqual(
       of('utterance').map((m) => m.text),
       ['Where is the station?', 'こんにちは'],
+    );
+    assert.deepEqual(
+      of('skipped').map((m) => [words(m), m.reason]),
+      [
+        ['Somebody else here', 'voice'],
+        ['いらっしゃいませ', 'voice'],
+      ],
     );
   });
 
@@ -1034,17 +1289,56 @@ describe('one phone in a noisy place', () => {
     assert.deepEqual(of('skipped'), []);
   });
 
-  it('writes out held speech only in one of the two recorded voices', async () => {
+  it('writes out held speech only in one of the two voices', async () => {
     const { solo, stt, of, words, captions } = soloSetup({ voices: printer });
     solo.setTalkMode('hold');
     solo.sendAudio(sound(2, 3000)); // a stranger, or a song
     solo.sendAudio(sound(2, 1000)); // me
-    solo.sendAudio(sound(2, 2000)); // them, not recorded yet
     stt.last.hear('Somebody', ['en'], { start: 0, end: 2 });
     stt.last.say('Somebody else', ['en'], { start: 0, end: 2 });
     stt.last.say('Hello', ['en'], { start: 2, end: 4 });
+    await settle();
+    // Them, shown as they are heard while their voice is not known: all said for them is translated.
+    solo.sendAudio(sound(6, 2000));
+    solo.sendAudio(sound(2, 3000)); // the stranger, once their voice is known
+    stt.last.hear('こんにちは', ['ja'], { start: 4, end: 5 });
     stt.last.say('こんにちは', ['ja'], { start: 4, end: 6 });
+    stt.last.say('駅はどこですか', ['ja'], { start: 6, end: 8 });
+    stt.last.say('遠いですか', ['ja'], { start: 8, end: 10 });
+    stt.last.say('いらっしゃいませ', ['ja'], { start: 10, end: 12 });
     stt.last.say('One', ['en']); // untimed: whose voice it is can't be told
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => [m.speakerId, m.text]),
+      [
+        ['me', 'Hello'],
+        ['them', 'こんにちは'],
+        ['them', '駅はどこですか'],
+        ['them', '遠いですか'],
+      ],
+    );
+    assert.deepEqual(
+      of('skipped').map((m) => [words(m), m.reason]),
+      [
+        ['Somebody else', 'voice'],
+        ['いらっしゃいませ', 'voice'],
+        ['One', 'untimed'],
+      ],
+    );
+    assert.deepEqual(captions(), ['こんにちは']);
+    assert.deepEqual(of('error'), []);
+  });
+
+  it('takes held speech for mine when it is only somewhat like my voice, and says once when it is nothing like it', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, of, words } = soloSetup({ voices: printer, report: (entry) => entries.push(entry) });
+    solo.setTalkMode('hold');
+    solo.sendAudio(sound(2, 5000)); // me, only somewhat like my recording
+    for (let i = 0; i < 3; i++) solo.sendAudio(sound(2, 2000)); // someone else, while I hold the button
+    stt.last.say('Hello', ['en'], { start: 0, end: 2 });
+    stt.last.say('One', ['en'], { start: 2, end: 4 });
+    stt.last.say('Two', ['en'], { start: 4, end: 6 });
+    stt.last.say('Three', ['en'], { start: 6, end: 8 });
     await settle();
     assert.deepEqual(
       of('utterance').map((m) => [m.speakerId, m.text]),
@@ -1053,24 +1347,19 @@ describe('one phone in a noisy place', () => {
     assert.deepEqual(
       of('skipped').map((m) => [words(m), m.reason]),
       [
-        ['Somebody else', 'voice'],
-        ['こんにちは', 'unrecorded'],
-        ['One', 'untimed'],
+        ['One', 'voice'],
+        ['Two', 'voice'],
+        ['Three', 'voice'],
       ],
     );
-    assert.deepEqual(captions(), []);
-
-    // Theirs once their voice is known.
-    solo.usePartner(print(2000));
-    await settle();
     assert.deepEqual(
-      of('utterance').map((m) => [m.speakerId, m.text]),
-      [
-        ['me', 'Hello'],
-        ['them', 'こんにちは'],
-      ],
+      of('error').map((m) => [m.fatal, m.message]),
+      [[false, 'Your voice sounds unlike your recording of it here: tap the lines that are yours, or record it again in Settings.']],
     );
-    assert.deepEqual(of('error'), []);
+    assert.deepEqual(
+      entries.filter((e) => e.type === 'unlike-recording'),
+      [{ type: 'unlike-recording' }],
+    );
   });
 
   it('reports each line, whose voice it sounds like piece by piece, and why it was skipped, when asked', async () => {
@@ -1138,72 +1427,103 @@ describe('recording their voice in a conversation', () => {
 
   it('tells the phone how their voice is known', async () => {
     const { solo, stt, messages } = soloSetup({ voices: printer });
-    solo.sendAudio(sound(2, 2000));
-    stt.last.say('はい', ['ja'], { start: 0, end: 2 });
-    await settle();
-    assert.deepEqual(voicesOf(messages), ['unknown'], 'not from what they say');
+    for (let i = 0; i < 3; i++) {
+      solo.sendAudio(sound(2, 2000));
+      stt.last.say('はい', ['ja'], { start: i * 2, end: i * 2 + 2 });
+      await settle();
+      assert.deepEqual(voicesOf(messages), i < 2 ? ['unknown'] : ['unknown', 'learned'], `after ${i + 1}`);
+    }
     solo.usePartner(print(2000));
-    assert.deepEqual(voicesOf(messages), ['unknown', 'recorded']);
+    assert.deepEqual(voicesOf(messages), ['unknown', 'learned', 'recorded']);
     assert.deepEqual(soloSetup().of('voices'), [], 'not without voice prints');
   });
 
-  it('records their voice, then translates what they said meanwhile, and nobody else', async () => {
+  it('records their voice, then translates what they said lately that the voice learned left out', async () => {
     const { solo, stt, messages, of, words } = soloSetup({ voices: printer });
-    // Someone else spoke first.
-    solo.sendAudio(sound(2, 3000));
-    stt.last.say('すみません', ['ja'], { start: 0, end: 2 });
+    // Someone else spoke first, long enough for their voice to be taken for theirs.
+    for (let i = 0; i < 3; i++) {
+      solo.sendAudio(sound(2, 3000));
+      stt.last.say('すみません', ['ja'], { start: i * 2, end: i * 2 + 2 });
+    }
+    solo.sendAudio(sound(2, 2000));
+    stt.last.say('こんにちは', ['ja'], { start: 6, end: 8 });
     await settle();
     solo.recordPartner();
     sendFrom(solo, undefined, { voice: 100 });
     sendFrom(solo, undefined, { seconds: 3, voice: 2000 });
-    stt.last.say('はじめまして', ['ja'], { start: 3, end: 6 });
+    stt.last.say('はじめまして', ['ja'], { start: 9, end: 12 });
     await settle();
-    assert.deepEqual(of('utterance'), [], 'not before their voice is recorded');
+    assert.deepEqual(of('skipped').map(words), ['こんにちは', 'はじめまして'], 'not before their voice is recorded');
     sendFrom(solo, undefined, { seconds: 4, voice: 2000 });
     await settle();
     // Now only the recorded voice is theirs.
     solo.sendAudio(sound(2, 3000));
-    stt.last.say('ちょっと', ['ja'], { start: 10, end: 12 });
+    stt.last.say('ちょっと', ['ja'], { start: 16, end: 18 });
     solo.sendAudio(sound(2, 2000));
-    stt.last.say('よろしく', ['ja'], { start: 12, end: 14 });
+    stt.last.say('よろしく', ['ja'], { start: 18, end: 20 });
     await settle();
     assert.deepEqual(
       of('utterance').map((m) => m.text),
-      ['はじめまして', 'よろしく'],
+      ['すみません', 'すみません', 'すみません', 'こんにちは', 'はじめまして', 'よろしく'],
     );
     assert.deepEqual(
       of('skipped').map((m) => [words(m), m.reason]),
       [
-        ['すみません', 'unrecorded'],
-        ['はじめまして', 'unrecorded'],
+        ['こんにちは', 'voice'],
+        ['はじめまして', 'voice'],
         ['ちょっと', 'voice'],
       ],
     );
     assert.deepEqual(voicesOf(messages), [
       'unknown',
-      'unknown 0/6',
-      'unknown 1/6',
-      'unknown 2/6',
-      'unknown 3/6',
-      'unknown 4/6',
-      'unknown 5/6',
-      'unknown 6/6',
+      'learned',
+      'learned 0/6',
+      'learned 1/6',
+      'learned 2/6',
+      'learned 3/6',
+      'learned 4/6',
+      'learned 5/6',
+      'learned 6/6',
       'recorded',
     ]);
   });
 
-  it('translates nothing said before their voice was recorded when the recording is stopped', async () => {
-    const { solo, stt, of } = soloSetup({ voices: printer });
+  it('records their voice while all said for them is translated, until it is known', async () => {
+    const { solo, stt, messages, of } = soloSetup({ voices: printer });
     solo.recordPartner();
     sendFrom(solo, undefined, { voice: 100 });
     sendFrom(solo, undefined, { seconds: 3, voice: 2000 });
     stt.last.say('はじめまして', ['ja'], { start: 1, end: 4 });
     await settle();
+    sendFrom(solo, undefined, { seconds: 4, voice: 2000 });
+    await settle();
+    solo.sendAudio(sound(2, 3000));
+    stt.last.say('ちょっと', ['ja'], { start: 8, end: 10 });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => m.text),
+      ['はじめまして'],
+    );
+    assert.equal(voicesOf(messages).at(-1), 'recorded');
+  });
+
+  it('translates nothing it left out when the recording of their voice is stopped', async () => {
+    const { solo, stt, of, words } = soloSetup({ voices: printer });
+    for (let i = 0; i < 3; i++) {
+      solo.sendAudio(sound(2, 3000));
+      stt.last.say('すみません', ['ja'], { start: i * 2, end: i * 2 + 2 });
+    }
+    await settle();
+    solo.recordPartner();
+    sendFrom(solo, undefined, { voice: 100 });
+    sendFrom(solo, undefined, { seconds: 3, voice: 2000 });
+    stt.last.say('はじめまして', ['ja'], { start: 7, end: 10 });
+    await settle();
     solo.stopRecording();
     sendFrom(solo, undefined, { seconds: 4, voice: 2000 });
     await settle();
-    assert.deepEqual(of('utterance'), []);
-    assert.equal(of('skipped').length, 1);
+    assert.equal(of('utterance').length, 3);
+    assert.deepEqual(of('skipped').map(words), ['はじめまして']);
   });
 
   it('keeps what was known of their voice when the recording is stopped', async () => {
@@ -1254,6 +1574,82 @@ describe('recording their voice in a conversation', () => {
     assert.deepEqual([...solo.partnerPrint!], [0, 1, 0], 'to save it for the next talk');
   });
 
+  it('takes a line translated after all for theirs when the voice learned was nothing like it, and what they said lately in it', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, messages, of, words } = soloSetup({ voices: printer, report: (entry) => entries.push(entry) });
+    // The radio, before they said anything.
+    for (let i = 0; i < 3; i++) {
+      solo.sendAudio(sound(2, 3000));
+      stt.last.say('ニュースです', ['ja'], { start: i * 2, end: i * 2 + 2 });
+    }
+    solo.sendAudio(sound(2, 2000));
+    stt.last.say('こんにちは', ['ja'], { start: 6, end: 8 });
+    solo.sendAudio(sound(2, 2000));
+    stt.last.say('すみません', ['ja'], { start: 8, end: 10 });
+    await settle();
+    assert.deepEqual(of('skipped').map(words), ['こんにちは', 'すみません']);
+    solo.accept(of('skipped')[1]!.id);
+    solo.sendAudio(sound(2, 3000));
+    stt.last.say('天気予報です', ['ja'], { start: 10, end: 12 });
+    solo.sendAudio(sound(2, 2000));
+    stt.last.say('駅はどこですか', ['ja'], { start: 12, end: 14 });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => m.text),
+      ['ニュースです', 'ニュースです', 'ニュースです', 'すみません', 'こんにちは', '駅はどこですか'],
+    );
+    assert.deepEqual(of('skipped').map(words), ['こんにちは', 'すみません', '天気予報です']);
+    assert.deepEqual(voicesOf(messages), ['unknown', 'learned', 'learned'], 'told again, as their voice was learned afresh');
+    assert.deepEqual(
+      entries.filter((e) => e.type === 'translated-after-all'),
+      [
+        { type: 'translated-after-all', id: 'u5', why: 'asked' },
+        { type: 'translated-after-all', id: 'u4', why: 'learned' },
+      ],
+    );
+  });
+
+  it('forgets the voice learned for them when the phone says it was someone else’s, and learns theirs afresh', async () => {
+    const { solo, stt, messages, of, words } = soloSetup({ voices: printer });
+    // The radio, before they said anything.
+    for (let i = 0; i < 3; i++) {
+      solo.sendAudio(sound(2, 3000));
+      stt.last.say('ニュースです', ['ja'], { start: i * 2, end: i * 2 + 2 });
+    }
+    solo.sendAudio(sound(2, 2000));
+    stt.last.say('こんにちは', ['ja'], { start: 6, end: 8 });
+    await settle();
+    assert.deepEqual(of('skipped').map(words), ['こんにちは']);
+    solo.forgetPartner();
+    assert.deepEqual(voicesOf(messages), ['unknown', 'learned', 'unknown']);
+    solo.forgetPartner();
+    assert.deepEqual(voicesOf(messages), ['unknown', 'learned', 'unknown'], 'nothing learned to forget');
+    // The radio is skipped from now on, and theirs learned from what else is said for them.
+    solo.sendAudio(sound(2, 3000));
+    stt.last.say('天気予報です', ['ja'], { start: 8, end: 10 });
+    for (let i = 0; i < 3; i++) {
+      solo.sendAudio(sound(2, 2000));
+      stt.last.say('駅はどこですか', ['ja'], { start: 10 + i * 2, end: 12 + i * 2 });
+    }
+    solo.sendAudio(sound(2, 3000));
+    stt.last.say('以上です', ['ja'], { start: 16, end: 18 });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => m.text),
+      ['ニュースです', 'ニュースです', 'ニュースです', '駅はどこですか', '駅はどこですか', '駅はどこですか'],
+    );
+    assert.deepEqual(
+      of('skipped').map((m) => [words(m), m.reason]),
+      [
+        ['こんにちは', 'voice'],
+        ['天気予報です', 'voice'],
+        ['以上です', 'voice'],
+      ],
+    );
+    assert.deepEqual(voicesOf(messages), ['unknown', 'learned', 'unknown', 'learned']);
+    assert.deepEqual([...solo.partnerPrint!], [0, 1, 0]);
+  });
+
   it('uses their voice saved in an earlier talk', async () => {
     const { solo, stt, messages, of, words } = soloSetup({ voices: printer });
     assert.equal(solo.usePartner(print(2000)), true);
@@ -1273,26 +1669,31 @@ describe('recording their voice in a conversation', () => {
 
   it('translates what they said in the last minute once their saved voice is chosen, and only that', async () => {
     const { solo, stt, of, words } = soloSetup({ voices: printer });
+    // A voice taken for theirs that was not.
+    for (let i = 0; i < 3; i++) {
+      solo.sendAudio(sound(2, 3000));
+      stt.last.say('すみません', ['ja'], { start: i * 2, end: i * 2 + 2 });
+    }
     solo.sendAudio(sound(2, 2000));
-    stt.last.say('おはよう', ['ja'], { start: 0, end: 2 });
+    stt.last.say('おはよう', ['ja'], { start: 6, end: 8 });
     await settle();
     solo.sendAudio(sound(61, 100));
     solo.sendAudio(sound(2, 2000));
-    stt.last.say('はい', ['ja'], { start: 63, end: 65 });
-    solo.sendAudio(sound(2, 3000));
-    stt.last.say('いらっしゃいませ', ['ja'], { start: 65, end: 67 });
+    stt.last.say('はい', ['ja'], { start: 69, end: 71 });
+    solo.sendAudio(sound(2, 6000));
+    stt.last.say('いらっしゃいませ', ['ja'], { start: 71, end: 73 });
     await settle();
     assert.equal(solo.usePartner(print(2000)), true);
     assert.deepEqual(
       of('utterance').map((m) => m.text),
-      ['はい'],
+      ['すみません', 'すみません', 'すみません', 'はい'],
     );
     assert.deepEqual(
       of('skipped').map((m) => [words(m), m.reason]),
       [
-        ['おはよう', 'unrecorded'],
-        ['はい', 'unrecorded'],
-        ['いらっしゃいませ', 'unrecorded'],
+        ['おはよう', 'voice'],
+        ['はい', 'voice'],
+        ['いらっしゃいませ', 'voice'],
       ],
     );
     // What is left is still there to translate.

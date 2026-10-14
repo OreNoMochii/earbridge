@@ -150,12 +150,13 @@ describe('solo conversation (one phone)', () => {
     assert.deepEqual([...client.of('skipped'), ...client.of('error')], []);
   });
 
-  it('takes the requests to record their voice, which need voice prints the server does not have', () => {
+  it('takes the requests to record their voice, or forget it, which need voice prints the server does not have', () => {
     const { deps } = createDeps();
     const client = connect(deps);
     client.send({ type: 'hello', mode: 'solo', myLang: 'en-US', theirLang: 'es' });
     client.send({ type: 'record-voice' });
     client.send({ type: 'stop-recording' });
+    client.send({ type: 'forget-voice' });
     assert.deepEqual(client.of('error'), []);
     assert.deepEqual(client.of('voices'), []);
   });

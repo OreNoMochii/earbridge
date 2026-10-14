@@ -44,7 +44,6 @@ const MAX_ENTRIES = 200;
 const SKIP_REASONS: Record<Exclude<SkipReason, 'language'>, string> = {
   distant: 'far away',
   voice: 'another voice',
-  unrecorded: 'voice not recorded',
   short: 'too short to tell',
   untimed: 'voice not checked',
   direction: 'from the side',
