@@ -25,6 +25,8 @@ export interface Pipeline {
   wordTimings?: boolean;
   /** Translate only the voices of the two people at the phone. */
   voices?: VoicePrinter | undefined;
+  /** Whether `stt` is paid by the second of sound sent to it: with `voices`, other voices are then kept from it (see `SoloOptions.metered`). */
+  metered?: boolean;
   /** Called once the conversation is over. */
   dispose?(): void;
 }
@@ -95,8 +97,8 @@ export class InAppBackend implements Backend {
     return this.solo?.partnerPrint;
   }
 
-  voicesHere(): Float32Array[] {
-    return this.solo?.voicesHere ?? [];
+  voiceHere(side: 'me' | 'them'): Float32Array | undefined {
+    return this.solo?.voiceHere(side);
   }
 
   stop(): void {
@@ -142,6 +144,7 @@ export class InAppBackend implements Backend {
       directions: options.ignoreSides && pipeline.wordTimings !== false,
       ...(pipeline.autoDetect === undefined ? {} : { autoDetect: pipeline.autoDetect }),
       ...(pipeline.voices && pipeline.wordTimings !== false ? { voices: pipeline.voices } : {}),
+      ...(pipeline.metered && { metered: true }),
       ...(options.report && { report: options.report }),
     });
     this.solo = solo;

@@ -54,6 +54,11 @@ export interface MicrophoneOptions {
 export interface KeptVoices {
   model: string;
   prints: readonly Float32Array[];
+  /**
+   * When no voice in a stretch of sound is like the prints, send the sound as heard rather
+   * than nothing: for when whoever talks says it is them, by holding or choosing their side.
+   */
+  passUnmatched: boolean;
 }
 
 /**
@@ -83,6 +88,14 @@ export interface Microphone {
    * late, in bursts. False where the phone can't (iPhone).
    */
   isolate(voices: KeptVoices | undefined): boolean;
+  /**
+   * Listens through the earphones' microphone (when they are connected and have one) or
+   * the phone's from now on, keeping the mode and the voices kept; resolves with the
+   * microphone in use, which is the phone's when the earphones' could not be. Nothing is
+   * heard meanwhile: a second or two for Bluetooth earphones. Fails when no microphone
+   * could be opened again: then listening has stopped.
+   */
+  switchInput(earphoneMic: boolean): Promise<CaptureInput>;
   stop(): void;
 }
 
@@ -123,10 +136,12 @@ class AndroidMicrophone implements Microphone {
   private stopped = false;
   private current: MicMode = 'off';
   private kept: KeptVoices | undefined;
+  private earphoneMic: boolean;
 
   constructor(module: NonNullable<typeof EarbridgeAudio>, options: MicrophoneOptions) {
     this.module = module;
     this.options = options;
+    this.earphoneMic = options.earphoneMic;
     this.subscriptions = [
       module.addListener('onAudio', (event) => {
         if (!this.stopped) options.onAudio(fromBase64(event.pcm).buffer, spatialOf(event));
@@ -163,27 +178,58 @@ class AndroidMicrophone implements Microphone {
   isolate(voices: KeptVoices | undefined): boolean {
     if (this.stopped || sameVoices(voices, this.kept)) return true;
     try {
-      if (voices) this.module.keepVoices({ model: voices.model, prints: voices.prints.map((print) => Array.from(print)) });
-      else this.module.keepAllVoices();
+      if (voices) {
+        const { model, passUnmatched } = voices;
+        this.module.keepVoices({ model, prints: voices.prints.map((print) => Array.from(print)), passUnmatched });
+      } else {
+        this.module.keepAllVoices();
+      }
     } catch {
       return false;
     }
-    this.kept = voices && { model: voices.model, prints: voices.prints.map((print) => print.slice()) };
+    this.kept = voices && { ...voices, prints: voices.prints.map((print) => print.slice()) };
     return true;
   }
 
   async start(): Promise<void> {
     this.module.setMicMode(this.current);
     try {
-      this.input = await this.module.startCapture({
-        earphoneMic: this.options.earphoneMic,
-        directions: this.options.directions ?? false,
-        testInputPath: TEST_AUDIO,
-      });
+      this.input = await this.capture();
     } catch (error) {
       this.release();
-      throw new MicrophoneError(error instanceof Error ? error.message : String(error));
+      throw new MicrophoneError(errorText(error));
     }
+  }
+
+  /**
+   * The phone's module starts over with the other microphone, keeping the mode and the
+   * voices kept. Starting over closes the microphone first, so if the other one can't be
+   * opened, the one that worked is opened again; if that fails too, listening is over.
+   */
+  async switchInput(earphoneMic: boolean): Promise<CaptureInput> {
+    if (this.stopped) return this.input;
+    const previous = this.earphoneMic;
+    this.earphoneMic = earphoneMic;
+    try {
+      this.input = await this.capture();
+    } catch (error) {
+      this.earphoneMic = previous;
+      try {
+        this.input = await this.capture();
+      } catch {
+        this.stop();
+        throw new MicrophoneError(errorText(error));
+      }
+    }
+    return this.input;
+  }
+
+  private capture(): Promise<CaptureInput> {
+    return this.module.startCapture({
+      earphoneMic: this.earphoneMic,
+      directions: this.options.directions ?? false,
+      testInputPath: TEST_AUDIO,
+    });
   }
 
   stop(): void {
@@ -209,6 +255,7 @@ function sameVoices(a: KeptVoices | undefined, b: KeptVoices | undefined): boole
   if (!a || !b) return a === b;
   return (
     a.model === b.model &&
+    a.passUnmatched === b.passUnmatched &&
     a.prints.length === b.prints.length &&
     a.prints.every((print, k) => {
       const other = b.prints[k];
@@ -266,6 +313,17 @@ class IosMicrophone implements Microphone {
 
   isolate(): boolean {
     return false;
+  }
+
+  /** The recorder keeps going; only the audio session's input changes. */
+  async switchInput(earphoneMic: boolean): Promise<CaptureInput> {
+    if (this.stopped) return this.input;
+    try {
+      this.input = await startIosSession(earphoneMic);
+    } catch (error) {
+      throw new MicrophoneError(`Could not switch the microphone: ${errorText(error)}`);
+    }
+    return this.input;
   }
 
   stop(): void {

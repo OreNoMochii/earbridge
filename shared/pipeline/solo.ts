@@ -3,6 +3,8 @@ import { AUDIO_SAMPLE_RATE, SKIPPED_KEPT, SOLO_ME, SOLO_THEM } from '../protocol
 import type { RecordingProblem, ServerMessage, SkipReason, SpeakerSelection, TalkMode } from '../protocol.ts';
 import { DirectionFilter } from './direction.ts';
 import type { Place, Spatial } from './direction.ts';
+import { SpeechGate } from './gate.ts';
+import type { GateVerdict, GateWindow } from './gate.ts';
 import { ConversationHistory } from './history.ts';
 import { judgeLanguages } from './language-filter.ts';
 import type { Logger } from './log.ts';
@@ -16,7 +18,7 @@ import { deliverTranslation } from './translate/deliver.ts';
 import type { TranslationRequest, Translator } from './translate/types.ts';
 import { deliverSpeech } from './voice/deliver.ts';
 import type { SpeechSynthesizer } from './voice/types.ts';
-import { MIN_LEARN_SECONDS, PartnerRecording, VoiceFilter } from './voices.ts';
+import { MIN_LEARN_SECONDS, PartnerRecording, QUIETEST_SPEECH_DB, VoiceFilter } from './voices.ts';
 import type { VoiceLikeness, VoicePrinter } from './voices.ts';
 
 export interface SoloOptions {
@@ -55,6 +57,13 @@ export interface SoloOptions {
    * the two people. Needs word timings too, and audio with directions (see `sendAudio`).
    */
   directions?: boolean;
+  /**
+   * The recognizer is paid by the second of sound sent to it. With `voices`, sound in no
+   * voice like the two people's, and silence, is then not sent at all once the voice
+   * expected has been heard here (see `VoiceFilter.judge`): it costs nothing, and cannot be
+   * translated after all. A short word said alone may be lost with it.
+   */
+  metered?: boolean;
   /**
    * Told of each line heard, what the filters measured of it and why it was skipped, to
    * check them on real talks. It gets everyone's words: only for test builds.
@@ -105,8 +114,8 @@ interface Heard {
   text: string;
   detected: string | undefined;
   details: SpeechDetails;
-  /** Where the recognizer's clock started on the conversation's. */
-  origin: number;
+  /** The clock of the recognizer stream that heard it, on the conversation's. */
+  clock: StreamClock;
   /** When it was said on the conversation's clock, if the recognizer timed it. */
   span: Span | undefined;
   samples: Int16Array | undefined;
@@ -148,6 +157,51 @@ const UNLIKE_TOLD_AFTER = 2;
  * voice is checked again: what they said while it was recorded is translated too.
  */
 const RECHECK_SECONDS = 60;
+/** Sound sent to the recognizer right after the last is one stretch with it; from further off on the conversation's clock, a new one. */
+const STRETCH_GAP = 0.001;
+/** Stretches remembered, the latest ones: the recognizer times words soon after they were sent. */
+const MAX_STRETCHES = 200;
+
+/**
+ * Where a recognizer stream's clock stands on the conversation's: the recognizer times
+ * words from the first sound its stream got, counting only the sound it got, which leaves
+ * out whatever was not sent to it (see `SoloOptions.metered`). Each stretch of sound sent
+ * in one go is noted by where it starts on both clocks.
+ */
+class StreamClock {
+  private readonly origin: number;
+  private readonly stretches: Array<{ stream: number; conversation: number }> = [];
+  /** Seconds of sound sent to the stream so far. */
+  private sent = 0;
+
+  /** `origin`: where on the conversation's clock the stream was opened. */
+  constructor(origin: number) {
+    this.origin = origin;
+  }
+
+  /** Some sound was sent: this many `seconds` of it, from `at` on the conversation's clock. */
+  note(seconds: number, at: number): void {
+    const last = this.stretches.at(-1);
+    if (!last || Math.abs(at - (last.conversation + this.sent - last.stream)) > STRETCH_GAP) {
+      this.stretches.push({ stream: this.sent, conversation: at });
+      if (this.stretches.length > MAX_STRETCHES) this.stretches.shift();
+    }
+    this.sent += seconds;
+  }
+
+  /**
+   * A time on the stream's clock on the conversation's. With `endOf`, a time right where
+   * a stretch ends is the end of that stretch, not the start of the next.
+   */
+  toConversation(seconds: number, endOf = false): number {
+    let found: { stream: number; conversation: number } | undefined;
+    for (const stretch of this.stretches) {
+      if (endOf ? stretch.stream < seconds : stretch.stream <= seconds) found = stretch;
+      else break;
+    }
+    return found ? found.conversation + seconds - found.stream : this.origin + seconds;
+  }
+}
 
 /**
  * One phone shared by two people. A single recognizer stream listens at a time: in
@@ -172,6 +226,14 @@ export class SoloConversation {
   private readonly loudness: LoudnessGate | undefined;
   private readonly voices: VoiceFilter | undefined;
   private readonly directions: DirectionFilter | undefined;
+  /** Keeps sound in no voice like the two people's from a recognizer paid by the second (see `SoloOptions.metered`). */
+  private readonly gate: SpeechGate | undefined;
+  /** The clock of the recognizer stream listening now, on the conversation's. */
+  private clock: StreamClock | undefined;
+  /** What the gate measured of the piece of sound it is judging, for the talk report. */
+  private gateMeasured: { level: number; voice?: VoiceLikeness } | undefined;
+  /** Pieces of silence the gate judged in a row, told to the talk report as one. */
+  private quietRun: { start: number; end: number; open: boolean } | undefined;
   private readonly skipped = new Map<string, Skipped>();
   /** The other person's voice being recorded, when it is. */
   private recording: PartnerRecording | undefined;
@@ -212,6 +274,16 @@ export class SoloConversation {
     this.voices = options.voices ? new VoiceFilter(options.voices) : undefined;
     this.directions = options.directions ? new DirectionFilter() : undefined;
     this.audio = this.loudness || this.voices || this.directions ? new AudioHistory() : undefined;
+    this.gate =
+      this.voices && options.metered
+        ? new SpeechGate({
+            judge: (window) => this.judgeSound(window),
+            send: (chunk, at) => this.send(chunk, at),
+            ...(options.report && {
+              judged: (window: GateWindow, verdict: GateVerdict, open: boolean) => this.reportGate(window, verdict, open),
+            }),
+          })
+        : undefined;
   }
 
   get speaker(): SpeakerSelection {
@@ -247,19 +319,33 @@ export class SoloConversation {
 
   /** Some 16 kHz mono PCM16 from the microphone, and which way it came from when the phone can tell. */
   sendAudio(chunk: Uint8Array, spatial?: Spatial): void {
+    const at = this.place.now;
     if (spatial && this.directions) {
       // Its direction counts for its middle.
-      this.directions.hear(this.place.now + chunk.byteLength / 2 / AUDIO_SAMPLE_RATE / 2, spatial);
+      this.directions.hear(at + chunk.byteLength / 2 / AUDIO_SAMPLE_RATE / 2, spatial);
     }
     this.place.append(chunk);
     this.audio?.append(chunk);
     this.recording?.add(chunk);
+    if (this.gate) this.gate.hear(chunk, at);
+    else this.send(chunk, at);
+  }
+
+  /** Sends some sound on to the recognizer, noting where on the conversation's clock it is from. */
+  private send(chunk: Uint8Array, at: number): void {
+    this.clock?.note(chunk.byteLength / 2 / AUDIO_SAMPLE_RATE, at);
     this.stream?.sendAudio(chunk);
   }
 
   /** The current turn is over: transcribe and translate what was heard so far. */
   flush(): void {
-    this.stream?.finalize();
+    if (!this.gate) {
+      this.stream?.finalize();
+      return;
+    }
+    // Once the last of the turn's sound that gets through is sent.
+    const stream = this.stream;
+    void this.gate.flush().then(() => stream?.finalize());
   }
 
   /** Translates something that was skipped after all, and learns from the mistake. */
@@ -347,16 +433,18 @@ export class SoloConversation {
   }
 
   /**
-   * The two voices as the phone hears them here, those learned so far: for keeping only
-   * voices like them, as each may sound less like its recording than like this.
+   * One of the two voices as the phone hears it here, as learned so far, or undefined until
+   * it is: for keeping only voices like it, as it may sound less like its recording than like this.
    */
-  get voicesHere(): Float32Array[] {
-    return this.voices?.printsHere ?? [];
+  voiceHere(side: SoloSpeaker): Float32Array | undefined {
+    return this.voices?.printHere(side);
   }
 
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.gate?.close();
+    this.reportSent();
     this.recording?.stop();
     this.recording = undefined;
     this.translations.abort();
@@ -370,13 +458,14 @@ export class SoloConversation {
     const isCurrent = () => generation === this.generation && !this.closed;
     const language = selection === 'auto' ? 'multi' : this.langOf(selection);
     // The recognizer times words from the stream's first audio, which is this far into the conversation's.
-    const origin = this.place.now;
+    const clock = new StreamClock(this.place.now);
+    this.clock = clock;
 
     const segmenter = new UtteranceSegmenter({
-      interim: (text, _detected, details) => this.interim(selection, generation, text, details, origin),
+      interim: (text, _detected, details) => this.interim(selection, generation, text, details, clock),
       utterance: (text, detected, details) => {
         if (this.speech?.generation === generation) this.speech = undefined;
-        this.utterance(selection, text, detected, details, origin);
+        this.utterance(selection, text, detected, details, clock);
       },
     });
 
@@ -408,20 +497,20 @@ export class SoloConversation {
   }
 
   /** When some speech was on the conversation's clock, if the recognizer said. */
-  private spanOf(details: SpeechDetails, origin: number): Span | undefined {
+  private spanOf(details: SpeechDetails, clock: StreamClock): Span | undefined {
     if (details.start === undefined || details.end === undefined) return undefined;
-    return { start: origin + details.start - PADDING, end: origin + details.end + PADDING };
+    return { start: clock.toConversation(details.start) - PADDING, end: clock.toConversation(details.end, true) + PADDING };
   }
 
   /** The audio of some speech, when the recognizer said when it was. */
-  private audioOf(details: SpeechDetails, origin: number): Int16Array | undefined {
-    const span = this.spanOf(details, origin);
+  private audioOf(details: SpeechDetails, clock: StreamClock): Int16Array | undefined {
+    const span = this.spanOf(details, clock);
     return span && this.audio?.slice(span.start, span.end);
   }
 
   /** Which way some speech came from, when the recognizer said when it was and the phone could tell. */
-  private headingOf(details: SpeechDetails, origin: number): number | undefined {
-    const span = this.spanOf(details, origin);
+  private headingOf(details: SpeechDetails, clock: StreamClock): number | undefined {
+    const span = this.spanOf(details, clock);
     return span && this.directions?.headingBetween(span.start, span.end);
   }
 
@@ -438,7 +527,7 @@ export class SoloConversation {
     generation: number,
     text: string,
     details: SpeechDetails,
-    origin: number,
+    clock: StreamClock,
   ): void {
     if (this.closed) return;
     const verdict = this.attribute(selection, details);
@@ -453,8 +542,8 @@ export class SoloConversation {
       this.showInterim(speakerId, text);
       return;
     }
-    const samples = this.loudness || this.voices ? this.audioOf(details, origin) : undefined;
-    const heading = this.headingOf(details, origin);
+    const samples = this.loudness || this.voices ? this.audioOf(details, clock) : undefined;
+    const heading = this.headingOf(details, clock);
     if (!held && this.tooQuiet(speakerId, samples && speechLevel(samples))) {
       this.showInterim(speakerId, '');
       return;
@@ -514,18 +603,18 @@ export class SoloConversation {
     text: string,
     detected: string | undefined,
     details: SpeechDetails,
-    origin: number,
+    clock: StreamClock,
   ): void {
     if (this.closed) return;
     this.learnTimings(details);
-    const span = this.spanOf(details, origin);
+    const span = this.spanOf(details, clock);
     const heard: Heard = {
       id: this.options.newId(),
       selection,
       text,
       detected,
       details,
-      origin,
+      clock,
       span,
       samples: span && this.audio?.slice(span.start, span.end),
       heading: span && this.directions?.headingBetween(span.start, span.end),
@@ -621,13 +710,13 @@ export class SoloConversation {
   private report(heard: Heard, side: SoloSpeaker | 'other', judged: Judged): void {
     const { report } = this.options;
     if (!report) return;
-    const { id, selection, text, details, origin, span, samples, heading, margin } = heard;
+    const { id, selection, text, details, clock, span, samples, heading, margin } = heard;
     const { reason, level, place, seconds, likeness } = judged;
     // On the conversation's clock, like everything else in the report.
     const words = details.words?.map(({ text, start, end, language }) => ({
       text,
-      start: origin + start,
-      end: origin + end,
+      start: clock.toConversation(start),
+      end: clock.toConversation(end, true),
       ...(language !== undefined && { language }),
     }));
     report({
@@ -747,7 +836,7 @@ export class SoloConversation {
    * Tells the phone how the other person's voice is known, when that changed or a recording
    * `failed`; again when their voice was learned afresh, as the phone may keep only voices
    * like it. How either sounds here, learned further from most lines, the phone looks up as
-   * each is delivered (see `voicesHere`).
+   * each is delivered (see `voiceHere`).
    */
   private reportVoices(failed?: RecordingProblem): void {
     if (!this.voices || this.closed) return;
@@ -764,6 +853,64 @@ export class SoloConversation {
     this.reportedPrint = print;
     this.options.send(message);
     this.options.report?.(message);
+  }
+
+  /**
+   * Whose voice the sound between two times is in, for the gate: nobody's when it is too
+   * quiet for speech; else as `VoiceFilter.judge` tells, for the side expected (both in
+   * "auto"). While their voice is recorded, everything heard is theirs to record: nothing
+   * is left out, and no voice told. Nor when the sound is too short to print.
+   */
+  private async judgeSound(window: GateWindow): Promise<GateVerdict> {
+    this.gateMeasured = undefined;
+    const samples = this.audio!.slice(window.start, window.end);
+    const level = speechLevel(samples);
+    if (level === undefined || level < QUIETEST_SPEECH_DB) return 'quiet';
+    this.gateMeasured = { level };
+    if (this.recording) return 'maybe';
+    const print = await this.voices!.printOf(samples);
+    if (!print || this.closed) return 'maybe';
+    if (this.options.report) this.gateMeasured = { level, voice: this.voices!.describe(print) };
+    const sides = this.selection === 'auto' ? [SOLO_ME, SOLO_THEM] : [this.selection];
+    return this.voices!.judge(sides, print);
+  }
+
+  /** Notes in the talk report how the gate judged a piece of sound; pieces of silence in a row as one entry. */
+  private reportGate(window: GateWindow, verdict: GateVerdict, open: boolean): void {
+    if (verdict === 'quiet') {
+      if (this.quietRun) {
+        this.quietRun.end = window.end;
+        this.quietRun.open = open;
+      } else {
+        this.quietRun = { start: window.start, end: window.end, open };
+      }
+      return;
+    }
+    this.reportQuiet();
+    const measured = this.gateMeasured;
+    this.options.report?.({
+      type: 'gate',
+      start: window.start,
+      end: window.end,
+      ...(measured && { level: measured.level }),
+      ...(measured?.voice && { voice: measured.voice }),
+      verdict,
+      open,
+    });
+  }
+
+  private reportQuiet(): void {
+    const run = this.quietRun;
+    if (!run) return;
+    this.quietRun = undefined;
+    this.options.report?.({ type: 'gate', start: run.start, end: run.end, verdict: 'quiet', open: run.open });
+  }
+
+  /** Notes in the talk report, at the end, how much of the sound heard the gate sent on. */
+  private reportSent(): void {
+    if (!this.gate || !this.options.report) return;
+    this.reportQuiet();
+    this.options.report({ type: 'sent', ...this.gate.stats });
   }
 
   private skip(id: string, skipped: Omit<Skipped, 'at'>): void {

@@ -63,6 +63,11 @@ export function SettingsScreen({ settings, onChange, onDone, onKeys, onVoices, c
   const sides = appFilters(engine) && canHearDirections();
   // A computer only skips far-away voices.
   const notHere = engine === 'server' ? ' Not through a computer.' : '';
+  // Deepgram is paid by the second of sound sent to it, so other voices are kept from it.
+  const unsent =
+    engine === 'keys'
+      ? ' Once your voice has been heard here, other voices are not even sent to Deepgram, so they can’t be translated after all.'
+      : '';
   const keysSaved = settings.deepgramKey.trim() !== '' && settings.deepinfraKey.trim() !== '';
 
   const setOnlyOurVoices = (on: boolean) => {
@@ -172,14 +177,14 @@ export function SettingsScreen({ settings, onChange, onDone, onKeys, onVoices, c
           />
           <SwitchRow
             title="Only our two voices"
-            description={`Shows and translates only you two: your recorded voice, and theirs, learned as they talk.${notHere}`}
+            description={`Shows and translates only you two: your recorded voice, and theirs, learned as they talk.${notHere}${unsent}`}
             value={voices && myVoice && settings.onlyOurVoices}
             disabled={!voices}
             onChange={setOnlyOurVoices}
           />
           <SwitchRow
             title="Separate voices"
-            description="Once their voice is learned or recorded, takes other voices out before writing. Words come a bit later."
+            description="Takes other voices out of the sound before it is written: while you hold or choose Me, every voice but yours; otherwise, once their voice is learned or recorded, all but you two. Words come a bit later."
             value={voices && myVoice && settings.onlyOurVoices && settings.separateVoices}
             disabled={!voices || !myVoice || !settings.onlyOurVoices}
             onChange={(separateVoices) => onChange({ separateVoices })}
@@ -201,7 +206,7 @@ export function SettingsScreen({ settings, onChange, onDone, onKeys, onVoices, c
           )}
           {filters && (
             <Note icon="info" tone="muted">
-              Anything skipped by mistake can still be translated: tap Translate on it.
+              Anything skipped by mistake can still be translated: tap Translate on it. Voices taken out before writing can’t be.
             </Note>
           )}
         </View>
@@ -227,7 +232,10 @@ export function SettingsScreen({ settings, onChange, onDone, onKeys, onVoices, c
                   value={settings.mic}
                   onChange={(mic) => onChange({ mic })}
                 />
-                <Text style={styles.hint}>With one phone, the phone’s own microphone usually works best.</Text>
+                <Text style={styles.hint}>
+                  With one phone, the phone’s own microphone usually works best. While earphones are connected, you can
+                  also switch during a conversation: tap the microphone’s name under the words.
+                </Text>
               </View>
               {engine !== 'local' && (
                 <View style={styles.field} accessibilityRole="radiogroup" accessibilityLabel="Voice">

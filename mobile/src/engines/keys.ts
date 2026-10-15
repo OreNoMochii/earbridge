@@ -43,6 +43,8 @@ function keysPipeline(settings: AppSettings): Pipeline {
       keyHint: DEEPGRAM_KEY_HINT,
     }),
     translator: new DeepInfraTranslator({ apiKey: deepinfraKey, model: TRANSLATION_MODEL, keyHint: DEEPINFRA_KEY_HINT }),
+    // Deepgram charges by the second of sound sent.
+    metered: true,
     synthesizer,
     // As the server decides: the languages asked for that have a natural voice.
     voiceLangs: synthesizer

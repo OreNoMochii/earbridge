@@ -2,7 +2,7 @@
 // translation for the other person, everything said so far, and the talk controls.
 
 import { useCallback, useState, useSyncExternalStore } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { SpeakerSelection } from '../../../shared/protocol.ts';
@@ -188,14 +188,50 @@ interface ControlsProps {
   subscribeLevel(listener: (level: number) => void): () => void;
 }
 
-function MicRow({ state, subscribeLevel }: Omit<ControlsProps, 'session'>) {
+/**
+ * Which microphone listens and, while earphones are connected, the other one to switch
+ * to: a tap on the name switches.
+ */
+function MicName({ session, state, lines }: { session: LiveSession; state: LiveState; lines: 1 | 2 }) {
+  const { styles, palette } = useStyles();
+  const other = state.otherMic;
+  if (!other) {
+    return (
+      <Text style={styles.micLabel} numberOfLines={lines}>
+        {state.micLabel}
+      </Text>
+    );
+  }
+  const action = other === 'earphones' ? 'Switch to the earphones' : 'Switch to the phone';
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Microphone: ${state.micLabel}. ${action}`}
+      onPress={() => session.switchMic(other)}
+      hitSlop={8}
+      style={({ pressed }) => [styles.micName, pressed && styles.micPressed]}
+    >
+      <Text style={styles.micLabel} numberOfLines={lines}>
+        {state.micLabel}
+      </Text>
+      <View style={styles.micSwitch}>
+        <Icon name="arrow-left-right" size={18} color={palette.accent} />
+        <Text style={styles.micSwitchLabel} numberOfLines={1}>
+          {action}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function MicRow({ session, state, subscribeLevel }: ControlsProps) {
   const { styles, palette } = useStyles();
   return (
     <View style={styles.micRow}>
       <Icon name={state.muted ? 'mic-off' : 'mic'} size={22} color={palette.muted} />
-      <Text style={[styles.micLabel, styles.micName]} numberOfLines={1}>
-        {state.micLabel}
-      </Text>
+      <View style={styles.mic}>
+        <MicName session={session} state={state} lines={1} />
+      </View>
       <LevelBars subscribe={subscribeLevel} mode={state.micMode} />
     </View>
   );
@@ -208,9 +244,7 @@ function MicAndPause({ session, state, subscribeLevel }: ControlsProps) {
     <View style={styles.micAndPause}>
       <Icon name={state.muted ? 'mic-off' : 'mic'} size={24} color={palette.muted} />
       <View style={styles.mic}>
-        <Text style={styles.micLabel} numberOfLines={2}>
-          {state.micLabel}
-        </Text>
+        <MicName session={session} state={state} lines={2} />
         <LevelBars subscribe={subscribeLevel} mode={state.micMode} />
       </View>
       <Button
@@ -231,7 +265,7 @@ function SoloControls({ session, state, subscribeLevel }: ControlsProps) {
   if (state.talkMode === 'hold') {
     return (
       <>
-        <MicRow state={state} subscribeLevel={subscribeLevel} />
+        <MicRow session={session} state={state} subscribeLevel={subscribeLevel} />
         <View style={styles.holdRow}>
           <HoldButton
             who="Me"
@@ -276,7 +310,7 @@ function GroupControls({ session, state, subscribeLevel }: ControlsProps) {
   if (state.talkMode === 'hold') {
     return (
       <>
-        <MicRow state={state} subscribeLevel={subscribeLevel} />
+        <MicRow session={session} state={state} subscribeLevel={subscribeLevel} />
         <View style={styles.holdRow}>
           <HoldButton
             who="Me"
@@ -371,9 +405,22 @@ const useStyles = themedStyles((palette) => ({
     flexShrink: 1,
     color: palette.muted,
   },
-  /** In a row, with the level at the end. */
+  /** The name with the switch under it. */
   micName: {
-    flex: 1,
+    gap: 2,
+  },
+  micPressed: {
+    opacity: 0.6,
+  },
+  micSwitch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  micSwitchLabel: {
+    ...type.secondaryBold,
+    flexShrink: 1,
+    color: palette.accent,
   },
   holdRow: {
     flexDirection: 'row',

@@ -14,10 +14,10 @@ export type ConnectionState = 'connecting' | 'ready' | 'reconnecting';
 /**
  * Why a conversation ended, for the screen to offer the right way out: the server's codes,
  * plus unreachable (the server could not be reached at all), microphone (not allowed),
- * earphones (disconnected while the conversation needed them), keys (an online service
- * rejected a key) and download (on-phone speech recognition could not be downloaded).
+ * keys (an online service rejected a key) and download (on-phone speech recognition could
+ * not be downloaded).
  */
-export type EndCode = ErrorCode | 'unreachable' | 'microphone' | 'earphones' | 'keys' | 'download';
+export type EndCode = ErrorCode | 'unreachable' | 'microphone' | 'keys' | 'download';
 
 export interface EndReason {
   message: string;

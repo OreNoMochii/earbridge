@@ -1,5 +1,6 @@
 import { AUDIO_SAMPLE_RATE, SOLO_ME, SOLO_THEM } from '../protocol.ts';
 import type { PartnerVoice, RecordingProblem } from '../protocol.ts';
+import type { GateVerdict } from './gate.ts';
 import type { Logger } from './log.ts';
 
 /** Turns speech into voice prints: vectors that point the same way for the same voice. */
@@ -94,12 +95,12 @@ export class VoiceFilter {
   }
 
   /**
-   * The two voices as the phone hears them here, those learned so far: each may be less like
-   * its recording than like this, e.g. for keeping only voices like them. The same arrays
-   * until they are learned further.
+   * One of the two voices as the phone hears it here, as learned so far, or undefined until
+   * it is: a voice may be less like its recording than like this, e.g. for keeping only
+   * voices like it. The same array until it is learned further.
    */
-  get printsHere(): Float32Array[] {
-    return [this.mineHere.print, this.partnerHere.print].filter((print): print is Float32Array => print !== undefined);
+  printHere(side: string): Float32Array | undefined {
+    return side === SOLO_THEM ? this.partnerHere.print : this.mineHere.print;
   }
 
   /**
@@ -160,6 +161,28 @@ export class VoiceFilter {
   private mayBe(side: string, print: Float32Array): boolean {
     if (side === SOLO_THEM) return this.theirs !== undefined && similarity(print, this.theirs.print) >= ALIKE;
     return similarity(print, this.mine) >= ALIKE && this.likePartner(print) < SAME_VOICE;
+  }
+
+  /**
+   * Whose voice a piece of sound is in, for speech expected from `sides` (by the "Me" /
+   * "Them" choice, or both in "auto"), before it is recognized: 'ours' if it is somewhat
+   * like one of the two voices as recorded or learned (see ALIKE), or clearly like one as
+   * heard here (only clearly: see `mayBe`); 'other' if it is nobody's we know; 'maybe'
+   * while a wanted voice is not known well enough to leave anything out on its account:
+   * theirs until it is known, but for a voice the user said was not theirs; either until
+   * it has been heard here, as a voice recorded somewhere else may sound unlike its
+   * recording. Learns nothing.
+   */
+  judge(sides: readonly string[], print: Float32Array): GateVerdict {
+    if (this.isMine(print) || similarity(print, this.mine) >= ALIKE) return 'ours';
+    if (sides.includes(SOLO_THEM)) {
+      const theirs = this.theirs?.print;
+      if (!theirs) return this.isRejected(print) ? 'other' : 'maybe';
+      if (this.likePartner(print) >= SAME_VOICE || similarity(print, theirs) >= ALIKE) return 'ours';
+      if (!this.partnerHere.print) return 'maybe';
+    }
+    if (sides.includes(SOLO_ME) && !this.mineHere.print) return 'maybe';
+    return 'other';
   }
 
   /**
@@ -358,7 +381,7 @@ export const RECORDING_SECONDS = 10;
 /** Moments louder than the background by this much are speech, in dB. */
 const SPEECH_ABOVE_NOISE_DB = 12;
 /** Anything quieter is not speech, in dB below full scale. */
-const QUIETEST_SPEECH_DB = -50;
+export const QUIETEST_SPEECH_DB = -50;
 /** The background is as loud as the quietest 10% of a recording's moments. */
 const NOISE_PERCENTILE = 0.1;
 

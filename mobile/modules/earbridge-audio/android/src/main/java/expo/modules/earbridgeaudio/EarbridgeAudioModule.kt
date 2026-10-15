@@ -68,6 +68,9 @@ class VoicesOptions : Record {
 
   /** Voice prints of the voices to keep: mine and the other person's. */
   @Field val prints: List<List<Double>> = emptyList()
+
+  /** A stretch of sound with no voice like the prints passes on as heard, rather than as nothing. */
+  @Field val passUnmatched: Boolean = false
 }
 
 private class CaptureException(message: String, cause: Throwable? = null) :
@@ -169,7 +172,7 @@ class EarbridgeAudioModule : Module() {
         throw CaptureException("Bad model name.")
       }
       val prints = options.prints.map { print -> FloatArray(print.size) { print[it].toFloat() } }
-      voices.keep(prints, File(File(context.filesDir, "voice-models"), options.model))
+      voices.keep(prints, File(File(context.filesDir, "voice-models"), options.model), options.passUnmatched)
     }
 
     // Passes every voice on from now on.

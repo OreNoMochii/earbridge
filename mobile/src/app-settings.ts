@@ -12,7 +12,8 @@ import { storage } from './storage.ts';
 
 /**
  * auto: the phone's microphone with one phone (it hears you both, and Bluetooth earphones
- *       keep their full sound quality), the earphones' microphone in a room.
+ *       keep their full sound quality), the earphones' microphone in a room. Switching
+ *       during a conversation makes it phone or earphones.
  */
 export type MicChoice = 'auto' | 'phone' | 'earphones';
 

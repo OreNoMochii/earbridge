@@ -92,6 +92,7 @@ function Main() {
         setSession(undefined);
       },
       onTalkModeChange: (talkMode) => setSettings((current) => ({ ...current, talkMode })),
+      onMicChange: (mic) => setSettings((current) => ({ ...current, mic })),
     });
     setSession(live);
     void live.start();

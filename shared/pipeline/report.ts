@@ -4,6 +4,7 @@
 // `SoloOptions.report`), and only test builds ask.
 
 import type { Place } from './direction.ts';
+import type { GateVerdict } from './gate.ts';
 import type { Margin } from './loudness.ts';
 import type { PartnerVoice, RecordingProblem, SkipReason, SpeakerSelection, TalkMode } from '../protocol.ts';
 import type { VoiceLikeness } from './voices.ts';
@@ -72,6 +73,14 @@ export type TalkReportEntry =
   /** The place turned out too loud for the filters: holding a button was suggested. */
   | { type: 'loud' }
   /** What I said while holding the button sounded nothing like my recording: recording it again was suggested. */
-  | { type: 'unlike-recording' };
+  | { type: 'unlike-recording' }
+  /**
+   * With a recognizer paid by the second (see `SoloOptions.metered`): a piece of sound as
+   * the gate in front of the recognizer judged it, how loud it was and whose voice it
+   * sounded like, and whether sound went through after it. Quiet pieces in a row are one entry.
+   */
+  | { type: 'gate'; start: number; end: number; level?: number; voice?: VoiceLikeness; verdict: GateVerdict; open: boolean }
+  /** At the end: seconds of sound heard in all, and of it sent to the recognizer. */
+  | { type: 'sent'; heard: number; sent: number };
 
 export type TalkReporter = (entry: TalkReportEntry) => void;

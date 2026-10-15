@@ -52,6 +52,8 @@ export type SeparationEvent = {
   scores: number[];
   /** Which voices were kept. */
   kept: boolean[];
+  /** None was, and the sound passed on as heard instead (see keepVoices). */
+  passed: boolean;
   /** How many seconds of sound wait to be split. */
   waiting: number;
 };
@@ -86,8 +88,10 @@ declare class EarbridgeAudioModule extends NativeModule<EarbridgeAudioEvents> {
   /**
    * Keeps only voices like these prints in what is sent, from now until keepAllVoices or
    * stopCapture. `model`: the file name of the speaker model that made them (EarbridgeVoice).
+   * With `passUnmatched`, a stretch of sound with no voice like the prints is sent as heard
+   * rather than as nothing.
    */
-  keepVoices(options: { model: string; prints: number[][] }): void;
+  keepVoices(options: { model: string; prints: number[][]; passUnmatched?: boolean }): void;
   keepAllVoices(): void;
   earphonesConnected(): boolean;
   /** Shows or updates the notification that keeps the conversation going in the background. False if Android refused. */

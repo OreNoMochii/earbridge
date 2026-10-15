@@ -36,7 +36,7 @@ import type { ConnectionState, EndReason } from './connection.ts';
 import type { Backend, BackendEvents } from './engines/backend.ts';
 import { InAppBackend } from './engines/in-app-backend.ts';
 import { openTalkReport } from './engines/talk-report.ts';
-import type { TalkReport } from './engines/talk-report.ts';
+import type { MicChange, TalkReport } from './engines/talk-report.ts';
 import type { InAppOptions } from './engines/in-app-backend.ts';
 import { prepareKeys } from './engines/keys.ts';
 import { prepareLocal } from './engines/local.ts';
@@ -141,6 +141,8 @@ export interface LiveState {
   status: { text: string; tone: StatusTone };
   micMode: MicMode;
   micLabel: string;
+  /** The microphone to switch to (see switchMic): the earphones' while they are connected, or the phone's. */
+  otherMic: 'phone' | 'earphones' | undefined;
   muted: boolean;
   /** One-phone mode: who the recognizer expects. */
   speaker: SpeakerSelection | undefined;
@@ -186,6 +188,8 @@ export interface LiveSessionOptions {
   onEnded(reason: EndReason | undefined, room: string | undefined): void;
   /** The way to talk was changed during the conversation, to keep for the next ones. */
   onTalkModeChange?(talkMode: AppSettings['talkMode']): void;
+  /** The microphone was switched during the conversation, to keep for the next ones. */
+  onMicChange?(mic: 'phone' | 'earphones'): void;
 }
 
 let nextToastId = 1;
@@ -203,11 +207,10 @@ export class LiveSession {
   private backend: Backend | undefined;
   /** What this talk's lines were and why they were skipped, in builds that keep one. */
   private report: TalkReport | undefined;
-  /** My voice print, when the microphone may keep only our voices (see updateIsolation). */
+  /** My voice print, when the microphone may keep only some voices (see keptVoices). */
   private myPrint: Float32Array | undefined;
-  /** The microphone keeps only our voices, as asked, with this many voice prints. */
-  private isolating = false;
-  private keptPrints = 0;
+  /** What the microphone was last asked to keep, in short, so that the talk report notes each change. */
+  private isolationNoted: string | undefined;
   private toldSeparating = false;
   private connectionState: ConnectionState = 'connecting';
   /** What the engine is getting ready, e.g. a language download. */
@@ -220,6 +223,10 @@ export class LiveSession {
   /** Whether earphones are connected; without them, translations play on the speaker. */
   private earphones = false;
   private earphonesGoneTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Listen through the earphones' microphone whenever they are connected: as set, or switched to during the talk. */
+  private earphoneMic: boolean;
+  /** Changes of microphone, one after the other (see changeMic). */
+  private micChange: Promise<void> = Promise.resolve();
 
   // Room mode. Every reconnection gets a new id, and the server may briefly still list
   // an old one, so all of them count as "me".
@@ -251,10 +258,12 @@ export class LiveSession {
     this.options = options;
     this.settings = options.settings;
     const { settings } = options;
+    this.earphoneMic = wantsEarphoneMic(settings);
     this.state = {
       status: { text: 'Starting the microphone…', tone: 'busy' },
       micMode: 'off',
       micLabel: 'Microphone',
+      otherMic: undefined,
       muted: false,
       speaker: undefined,
       autoDetect:
@@ -342,7 +351,7 @@ export class LiveSession {
     let mic: Microphone;
     try {
       mic = await openMicrophone({
-        earphoneMic: wantsEarphoneMic(settings),
+        earphoneMic: this.earphoneMic,
         // Only the phone's own filters use them.
         directions: this.options.server === undefined && appFilters(settings.engine) && settings.ignoreSides,
         onAudio: (pcm, spatial) => this.backend?.sendAudio(pcm, spatial),
@@ -370,7 +379,8 @@ export class LiveSession {
     this.mic = mic;
     this.report?.note({ type: 'mic', input: mic.input });
     this.update({ micLabel: micLabel(mic.input) });
-    if (wantsEarphoneMic(settings) && this.earphones && mic.input.input === 'phone') {
+    this.updateMicSwitch();
+    if (this.earphoneMic && this.earphones && mic.input.input === 'phone') {
       this.toast('Listening with the phone’s microphone.');
     }
     if (settings.output === 'earphones' && !this.earphones) {
@@ -756,30 +766,53 @@ export class LiveSession {
   }
 
   /**
-   * Once both voices are known, theirs learned from what they said or recorded, and theirs
-   * is not being recorded, the microphone keeps only those two in what it sends; until
-   * then, everything. Learned afresh (see onVoices), it keeps the new voice. Each voice as
-   * heard here, once learned, counts too: a voice can be less like its recording, made
-   * somewhere else, than like itself here; learned further from most lines, it is looked
-   * up again as each is delivered. As it hides the other voices, a voice learned by
-   * mistake leaves no skipped line to tap: "Not them" (forgetPartner) puts it right.
+   * The voices the microphone keeps in what it sends, by who is expected to talk (the side
+   * held or chosen, see selectSpeaker). While it is me: only my voice, from the start. While
+   * it is them: only theirs, once learned from what they said or recorded; until then,
+   * everything, so that it can be learned. Sound in no voice like those passes as heard
+   * then: whoever holds or chooses a side says the sound is theirs, and my voice can be
+   * unlike my recording here until it is learned (see onVoices). Either of us (hands-free,
+   * told apart by language): both voices once theirs is known, and nothing in neither,
+   * once both have been heard here; until then sound in neither passes as heard too, as
+   * either of us may sound unlike the recording. Each voice as heard here, once learned,
+   * counts too: a voice can be less like its recording, made somewhere else, than like
+   * itself here; learned further from most lines, it is looked up again as each is
+   * delivered. Nothing while their voice is being recorded: it is recorded as heard. As it
+   * hides the other voices, a voice learned by mistake leaves no skipped line to tap:
+   * "Not them" (forgetPartner) puts it right.
    */
+  private keptVoices(): KeptVoices | undefined {
+    const voices = this.state.voices;
+    const mine = this.myPrint;
+    if (!this.separatesVoices() || !mine || !voices || voices.recording) return undefined;
+    const known = voices.partner === 'learned' || voices.partner === 'recorded';
+    const theirs = known ? this.backend?.partnerVoice?.() : undefined;
+    const here = (side: 'me' | 'them') => this.backend?.voiceHere?.(side);
+    const learned = (prints: (Float32Array | undefined)[]) => prints.filter((print) => print !== undefined);
+    const model = VOICE_MODEL_FILE;
+    const speaker = this.state.speaker;
+    if (speaker === SOLO_ME) return { model, prints: learned([mine, here('me')]), passUnmatched: true };
+    if (!theirs) return undefined;
+    if (speaker === SOLO_THEM) return { model, prints: learned([theirs, here('them')]), passUnmatched: true };
+    const mineHere = here('me');
+    const theirsHere = here('them');
+    return { model, prints: learned([mine, theirs, mineHere, theirsHere]), passUnmatched: !mineHere || !theirsHere };
+  }
+
+  /** Has the microphone keep the voices of the moment (see keptVoices), noting a change in the talk report. */
   private updateIsolation(): void {
     const mic = this.mic;
     if (!mic || this.ended) return;
-    const voices = this.state.voices;
-    const known = voices !== undefined && !voices.recording && (voices.partner === 'learned' || voices.partner === 'recorded');
-    const theirs = known ? this.backend?.partnerVoice?.() : undefined;
-    const here = known ? (this.backend?.voicesHere?.() ?? []) : [];
-    const kept: KeptVoices | undefined =
-      this.separatesVoices() && this.myPrint && theirs ? { model: VOICE_MODEL_FILE, prints: [this.myPrint, theirs, ...here] } : undefined;
+    const kept = this.keptVoices();
     if (!mic.isolate(kept)) return;
+    const asked = kept !== undefined;
     const prints = kept?.prints.length ?? 0;
-    if (this.isolating !== (kept !== undefined) || prints !== this.keptPrints) {
-      this.isolating = kept !== undefined;
-      this.keptPrints = prints;
-      this.report?.note({ type: 'isolation', asked: this.isolating, prints });
-    }
+    const speaker = this.state.speaker ?? 'auto';
+    const passUnmatched = kept?.passUnmatched ?? false;
+    const noted = [asked, prints, speaker, passUnmatched].join(' ');
+    if (noted === this.isolationNoted) return;
+    this.isolationNoted = noted;
+    this.report?.note({ type: 'isolation', asked, prints, speaker, passUnmatched });
   }
 
   private onIsolation(event: IsolationEvent): void {
@@ -981,6 +1014,8 @@ export class LiveSession {
     this.update({ speaker: selection });
     // If not connected, onReady sends it once the connection is back.
     this.backend?.send({ type: 'speaker', speaker: selection });
+    // The microphone keeps that side's voice.
+    this.updateIsolation();
   }
 
   setMuted(muted: boolean): void {
@@ -1050,25 +1085,87 @@ export class LiveSession {
     if (this.earphones) return; // back within a moment
     this.earphones = true;
     this.voice.reset();
-    if (this.settings.output === 'earphones') this.toast('Earphones connected.');
+    this.updateMicSwitch();
+    if (this.state.otherMic === 'earphones') {
+      if (this.earphoneMic) this.changeMic('connected');
+      else this.toast('Earphones connected · tap the microphone to use theirs.');
+    } else if (this.settings.output === 'earphones') {
+      this.toast('Earphones connected.');
+    }
     this.updateMic();
   }
 
   private async earphonesGone(): Promise<void> {
     const connected = await earphonesConnected();
     if (this.ended || connected || !this.earphones) return;
-    if (this.mic?.input.input === 'earphones') {
-      this.end({ message: 'The earphones were disconnected. Start again to continue.', code: 'earphones' });
-      return;
-    }
     this.earphones = false;
     // Like music apps: never carry on out loud when the earphones are pulled out.
     this.voice.reset();
     this.speech.cancel();
-    if (this.settings.output === 'earphones') {
-      this.toast('Earphones disconnected · using the phone speaker.');
+    if (this.mic?.input.input === 'earphones') {
+      this.changeMic('disconnected');
+    } else {
+      this.updateMicSwitch();
+      if (this.settings.output === 'earphones') this.toast('Earphones disconnected · using the phone speaker.');
     }
     this.updateMic();
+  }
+
+  /**
+   * Listens through the earphones' microphone (while they are connected) or the phone's
+   * from now on, in this conversation and the next ones.
+   */
+  switchMic(input: 'phone' | 'earphones'): void {
+    if (this.ended || !this.mic) return;
+    this.earphoneMic = input === 'earphones';
+    this.options.onMicChange?.(input);
+    this.changeMic('switched');
+  }
+
+  /** Changes happen one after the other: switching to Bluetooth earphones takes a second or two. */
+  private changeMic(change: MicChange): void {
+    this.micChange = this.micChange.then(() => this.applyMic(change));
+  }
+
+  private async applyMic(change: MicChange): Promise<void> {
+    const mic = this.mic;
+    if (!mic || this.ended || mic.input.input === 'test') return;
+    const wanted = this.earphoneMic && this.earphones;
+    if ((mic.input.input === 'earphones') === wanted) {
+      this.updateMicSwitch();
+      return;
+    }
+    this.update({ micLabel: 'Switching the microphone…', otherMic: undefined });
+    let input: CaptureInput;
+    try {
+      input = await mic.switchInput(wanted);
+    } catch (error) {
+      this.end({ message: `${error instanceof Error ? error.message : String(error)} Start again to continue.` });
+      return;
+    }
+    if (this.ended) return;
+    this.report?.note({ type: 'mic', input, change });
+    this.update({ micLabel: micLabel(input) });
+    this.updateMicSwitch();
+    if (wanted && input.input !== 'earphones') {
+      this.toast(
+        change === 'connected'
+          ? 'Earphones connected · their microphone couldn’t be used, listening with the phone’s.'
+          : 'The earphones’ microphone couldn’t be used · listening with the phone’s.',
+      );
+    } else if (change === 'connected') {
+      this.toast('Earphones connected · listening with their microphone.');
+    } else if (change === 'disconnected') {
+      this.toast('Earphones disconnected · using the phone’s microphone and speaker.');
+    }
+    this.updateMic();
+  }
+
+  /** Whether there is another microphone to switch to: the earphones' while they are connected, or the phone's. */
+  private updateMicSwitch(): void {
+    const input = this.mic?.input.input;
+    const otherMic = !input || input === 'test' || !this.earphones ? undefined : input === 'earphones' ? 'phone' : 'earphones';
+    if (this.state.otherMic !== otherMic) this.update({ otherMic });
   }
 
   private setSpeaking(speaking: boolean): void {

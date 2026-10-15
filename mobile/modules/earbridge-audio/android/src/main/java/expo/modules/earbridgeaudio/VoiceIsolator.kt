@@ -52,10 +52,12 @@ internal class Heard(
 )
 
 /**
- * Passes the microphone's sound on ("onAudio"), keeping only the two people's voices once
- * both are known: each 2 s is split into two voices by a small separation model, and each
- * voice is kept if its voice print is like mine or theirs. Everyone else, and most of the
- * noise, drops out before the speech recognizer hears it.
+ * Passes the microphone's sound on ("onAudio"), keeping only the voices asked for: each 2 s
+ * is split into two voices by a small separation model, and each voice is kept if its voice
+ * print is like one of the prints given (mine and theirs, or only the one expected to
+ * talk). Everyone else, and most of the noise, drops out before the speech recognizer hears
+ * it. When neither voice is like the prints, nothing passes, or the sound as heard when
+ * asked (see `keep`): whoever holds a button to talk says the sound is theirs.
  *
  * Splitting needs a block of sound, so while it keeps voices the sound goes on 0.5 to 2 s
  * late, in bursts. Each chunk keeps the mode it was heard in, and when the microphone goes
@@ -72,6 +74,8 @@ internal class VoiceIsolator(
 
   // Used on `thread` only.
   private var prints: List<FloatArray> = emptyList()
+  /** A block with no voice like the prints passes on as heard, rather than as nothing. */
+  private var passUnmatched = false
   private var separator: OrtSession? = null
   private var printer: SpeakerEmbeddingExtractor? = null
   private var printerModel: File? = null
@@ -104,10 +108,12 @@ internal class VoiceIsolator(
 
   /**
    * Keeps only voices like these prints from now on; `model` is the speaker model that made
-   * them. Already keeping voices with that model, it just takes the prints, from the next
-   * block on: as a voice is learned further, its print changes with most lines.
+   * them. With `passUnmatched`, a block with no voice like them passes on as heard, rather
+   * than as nothing. Already keeping voices with that model, it just takes the prints, from
+   * the next block on: as a voice is learned further, its print changes with most lines.
    */
-  fun keep(voices: List<FloatArray>, model: File) = execute {
+  fun keep(voices: List<FloatArray>, model: File, passUnmatched: Boolean) = execute {
+    this.passUnmatched = passUnmatched
     if (keeping && printerModel == model) {
       if (voices.size != prints.size || !voices.indices.all { voices[it].contentEquals(prints[it]) }) prints = voices.map { it.copyOf() }
       return@execute
@@ -286,7 +292,7 @@ internal class VoiceIsolator(
 
   // ---------------------------------------------------------------- the voices
 
-  /** The voices in `sound` that are like the prints, together. */
+  /** The voices in `sound` that are like the prints, together; with none, nothing, or `sound` itself when asked. */
   private fun separate(sound: FloatArray): FloatArray {
     val n = sound.size
     val kept = FloatArray(n)
@@ -323,6 +329,8 @@ internal class VoiceIsolator(
       scores += likeness ?: -1.0
       keep += ours
     }
+    // Neither voice is like the prints: whoever holds a button says the sound is theirs all the same.
+    val passed = passUnmatched && keep.none { it }
     val finished = SystemClock.elapsedRealtime()
     send(
       "onSeparation",
@@ -332,10 +340,11 @@ internal class VoiceIsolator(
         "printMs" to (finished - split).toDouble(),
         "scores" to scores,
         "kept" to keep,
+        "passed" to passed,
         "waiting" to waiting.get().toDouble() / 10,
       ),
     )
-    return kept
+    return if (passed) sound else kept
   }
 
   /** How alike the voice is to the closer of the two prints, from -1 to 1; null if it can't be printed. */

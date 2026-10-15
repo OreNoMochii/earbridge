@@ -10,12 +10,16 @@ import type {
   IsolationEvent,
   SeparationEvent,
 } from '../../modules/earbridge-audio/src/EarbridgeAudioModule.ts';
+import type { SpeakerSelection } from '../../../shared/protocol.ts';
 import type { AppSettings } from '../app-settings.ts';
 
 const TALK_REPORT = process.env.EXPO_PUBLIC_TALK_REPORT === '1';
 
 /** Whether this build keeps talk reports (Android only). */
 export const keepsTalkReports = TALK_REPORT && EarbridgeAudio !== null;
+
+/** Why the microphone changed during a talk: the user switched, or earphones came or went. */
+export type MicChange = 'switched' | 'connected' | 'disconnected';
 
 /** What the phone notes besides the pipeline's entries. */
 export type PhoneReportEntry =
@@ -36,9 +40,20 @@ export type PhoneReportEntry =
         | 'separateVoices'
       >;
     }
-  | { type: 'mic'; input: CaptureInput }
-  /** Keeping only our voices in what the microphone sends: asked for (`asked`), with this many voice `prints`, or as the phone says. */
-  | ({ type: 'isolation'; asked?: boolean; prints?: number } & Partial<IsolationEvent>)
+  /** Which microphone listens: from the start, or after a change (see MicChange). */
+  | { type: 'mic'; input: CaptureInput; change?: MicChange }
+  /**
+   * Keeping only some voices in what the microphone sends: asked for (`asked`), with this
+   * many voice `prints`, for whoever is expected to talk (`speaker`), passing sound in no
+   * such voice as heard or not (`passUnmatched`); or as the phone says.
+   */
+  | ({
+      type: 'isolation';
+      asked?: boolean;
+      prints?: number;
+      speaker?: SpeakerSelection;
+      passUnmatched?: boolean;
+    } & Partial<IsolationEvent>)
   /** How a stretch of sound was split into voices, and which were kept. */
   | ({ type: 'separation' } & SeparationEvent)
   | { type: 'end'; reason?: string };
