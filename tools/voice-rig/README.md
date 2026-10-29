@@ -13,7 +13,7 @@ node run.mts clips/clean.wav    # needs DEEPGRAM_API_KEY in the repository's .en
 
 Clips (`clips/make_clips.py`): me (Daniel) and another talker (Samantha) over 27 s, the other interrupting
 between and over my lines; `clean`, and the same under a crowd's chatter at 10, 5 and 0 dB SNR. The `late-*` clips
-put two more of my lines first, so that my voice as heard here is settled (three prints) before anyone else talks,
+put three more of my lines, with pauses between, first, so that my voice as heard here is settled (three prints) before anyone else talks,
 as in a conversation that has gone on for a minute. `truth.json` / `late-truth.json` hold each line's talker and
 times.
 

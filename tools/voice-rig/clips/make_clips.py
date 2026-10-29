@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Builds test clips: me (the macOS voice Daniel) holding the button, another talker (Samantha, or
 the voice named as the first argument) interjecting between and over my lines, with and without
-babble. With --late, two more of my lines come first, so that my voice here is settled before
-anyone else talks (files are then named late-*).
+babble. With --late, three more of my lines come first, with pauses between, so that my voice here is
+settled (three prints) before anyone else talks (files are then named late-*).
 
 Writes 16 kHz mono PCM16 .wav files next to this script, plus truth.json with each
 line's speaker and times.
@@ -54,11 +54,13 @@ SCRIPT = [
 LATE = '--late' in sys.argv
 ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
 if LATE:
-    # My voice here settles after three clear lines: two more of mine first, everything else 9 s later.
+    # My voice here settles after three clear lines: three more of mine first, 2 s apart so that the
+    # recognizer cuts them into separate lines, everything else 16 s later.
     SCRIPT = [
         (ME, 1.0, "Good morning. Is this table free, or are you expecting someone?"),
-        (ME, 5.5, "I'll have the same as yesterday, thank you very much."),
-    ] + [(who, start + 9.0, text) for who, start, text in SCRIPT]
+        (ME, 6.5, "I'll have the same as yesterday, thank you very much."),
+        (ME, 11.5, "And a glass of water, if that's no trouble."),
+    ] + [(who, start + 16.0, text) for who, start, text in SCRIPT]
 PREFIX = 'late-' if LATE else ''
 VOICES = {ME: 'Daniel', OTHER: ARGS[0] if ARGS else 'Samantha'}
 BABBLE = ['Karen', 'Tessa', 'Moira', 'Rishi', 'Fred', 'Tara']
@@ -69,7 +71,7 @@ BABBLE_TEXT = (
     "having lunch at that little place near the bridge, which honestly was not bad at all."
 )
 
-total = 36.0 if LATE else 27.0
+total = 43.0 if LATE else 27.0
 n = int(total * SR)
 mix = np.zeros(n, dtype=np.float32)
 truth = []
