@@ -13,13 +13,13 @@ import type { Margin, Span } from './loudness.ts';
 import type { TalkReporter, VoiceWindow } from './report.ts';
 import { UtteranceSegmenter } from './stt/segmenter.ts';
 import type { SpeechDetails } from './stt/segmenter.ts';
-import type { SttProvider, SttStream } from './stt/types.ts';
+import type { SttProvider, SttStream, SttWord } from './stt/types.ts';
 import { deliverTranslation } from './translate/deliver.ts';
 import type { TranslationRequest, Translator } from './translate/types.ts';
 import { deliverSpeech } from './voice/deliver.ts';
 import type { SpeechSynthesizer } from './voice/types.ts';
-import { MIN_LEARN_SECONDS, PartnerRecording, QUIETEST_SPEECH_DB, VoiceFilter } from './voices.ts';
-import type { VoiceLikeness, VoicePrinter } from './voices.ts';
+import { joined, MIN_LEARN_SECONDS, PartnerRecording, QUIETEST_SPEECH_DB, VoiceFilter } from './voices.ts';
+import type { LearnedPrints, VoiceLikeness, VoicePrinter } from './voices.ts';
 
 export interface SoloOptions {
   myLang: string;
@@ -90,6 +90,10 @@ interface Skipped {
   voice: { print: Float32Array; seconds: number } | undefined;
   /** How far above the place's background it stood. */
   margin: Margin | undefined;
+  /** Said holding the button for that side. */
+  held: boolean;
+  /** Part of a line the rest of which was translated (see `judgeParts`): not vouched for by itself. */
+  part?: boolean;
   /** When it was skipped, on the conversation's clock. */
   at: number;
 }
@@ -131,6 +135,46 @@ interface Judged {
   /** Seconds of speech its voice print is from, and whose voice it sounds like. */
   seconds?: number | undefined;
   likeness?: VoiceLikeness | undefined;
+  /** What of it was translated, when words of someone else's were left out. */
+  kept?: string;
+}
+
+/** The words of a line that one talker said, as the recognizer tells talkers apart (see `judgeParts`). */
+interface Part {
+  speaker: string;
+  words: SttWord[];
+  /** Their sound, put together, and how many seconds that is. */
+  samples: Int16Array;
+  seconds: number;
+  /** Its voice print, unless too short to tell; whose voice that sounded like, for the talk report. */
+  print?: Float32Array;
+  likeness?: VoiceLikeness;
+  /** Whether it is ours; else the id it was skipped under. */
+  kept: boolean;
+  id?: string;
+  /** A stretch of words judged apart from the rest of its talker's, by its own voice (see `judgeParts`). */
+  apart?: true;
+}
+
+/** Words in a row that the recognizer gave to the same talker: one turn of theirs, as it heard it. */
+interface Stretch {
+  speaker: string;
+  words: SttWord[];
+  start: number;
+  end: number;
+}
+
+/** A line's words by turns, as the recognizer told its talkers apart (see `SttWord.speaker`). */
+function stretchesOf(words: readonly SttWord[]): Stretch[] {
+  const stretches: Stretch[] = [];
+  for (const word of words) {
+    const last = stretches.at(-1);
+    if (last && last.speaker === word.speaker) {
+      last.words.push(word);
+      last.end = Math.max(last.end, word.end);
+    } else stretches.push({ speaker: word.speaker!, words: [word], start: word.start, end: word.end });
+  }
+  return stretches;
 }
 
 /** Seconds of audio around the recognized words that count as theirs. */
@@ -364,9 +408,11 @@ export class SoloConversation {
       if (reason === 'direction') this.directions?.correct(speakerId, heading);
       else this.directions?.learn(speakerId, heading);
     }
-    // That voice just sounds different here, or theirs was learned from someone else's.
+    // That voice just sounds different here, or theirs was learned from someone else's. Part
+    // of a held line, the rest of which was in that voice, is not vouched for on its own: it
+    // was likely someone else's, asked for out of curiosity.
     const theirs = this.voices?.partnerPrint;
-    if (voice) this.voices?.translated(speakerId, voice.print, voice.seconds);
+    if (voice) this.voices?.translated(speakerId, voice.print, voice.seconds, skipped.held && !skipped.part);
     this.hearMargin(speakerId, skipped.margin);
     this.options.report?.({ type: 'translated-after-all', id, why: 'asked' });
     this.deliver(id, speakerId, skipped.text, skipped.lang);
@@ -440,6 +486,23 @@ export class SoloConversation {
     return this.voices?.printHere(side);
   }
 
+  /** My voice as the phone hears it here, as learned so far: to take it up again next time (see `useMyVoiceHere`). */
+  get myVoiceHere(): LearnedPrints | undefined {
+    return this.voices?.myVoiceHere;
+  }
+
+  /**
+   * My voice as the phone heard it in earlier conversations through the microphone it
+   * listens with now, to learn further from there; undefined forgets what was learned, as
+   * for another microphone. False when it cannot be used: made by another speaker model, or
+   * voices are not checked.
+   */
+  useMyVoiceHere(learned: LearnedPrints | undefined): boolean {
+    if (!this.voices || this.closed || !this.voices.useMyVoiceHere(learned)) return false;
+    this.options.report?.({ type: 'my-voice-here', prints: learned?.count ?? 0 });
+    return true;
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -469,8 +532,9 @@ export class SoloConversation {
       },
     });
 
+    // Who said each word, where the recognizer can tell: a line two people talked over is then judged voice by voice (see `judgeParts`).
     this.stream = this.options.stt.open(
-      { language },
+      { language, ...(this.voices && { speakers: true }) },
       {
         onResult: (result) => segmenter.handleResult(result),
         onUtteranceEnd: () => segmenter.handleUtteranceEnd(),
@@ -645,14 +709,17 @@ export class SoloConversation {
     }
   }
 
-  /** Translates an utterance, unless it seems to come from someone else. */
+  /**
+   * Translates an utterance, unless it seems to come from someone else; what someone else
+   * said over it is left out, where the recognizer tells talkers apart.
+   */
   private async check(heard: Heard): Promise<void> {
     if (this.closed) return;
     const { id, selection, text, detected, details, samples, heading, margin } = heard;
     const verdict = this.attribute(selection, details);
     if (verdict === 'other') {
       const lang = detected ?? this.options.theirLang;
-      const unmeasured = { level: undefined, heading: undefined, voice: undefined, margin: undefined };
+      const unmeasured = { level: undefined, heading: undefined, voice: undefined, margin: undefined, held: false };
       this.skip(id, { speakerId: SOLO_THEM, lang, text, reason: 'language', ...unmeasured });
       this.report(heard, 'other', { reason: 'language' });
       return;
@@ -670,7 +737,7 @@ export class SoloConversation {
     const level = samples && speechLevel(samples);
     const now = this.place.now;
     if (!held && this.tooQuiet(speakerId, level)) {
-      this.skip(id, { speakerId, lang, text, reason: 'distant', level, heading, voice: undefined, margin });
+      this.skip(id, { speakerId, lang, text, reason: 'distant', level, heading, voice: undefined, margin, held });
       this.report(heard, speakerId, { reason: 'distant', level });
       return;
     }
@@ -683,7 +750,7 @@ export class SoloConversation {
     const measured: Judged = { level, place, seconds: voice?.seconds, likeness };
     // From a side of the phone: someone else, unless it was clearly one of the two voices.
     if (place === 'between' && !(voice && this.voices!.recognizes(voice.print, speakerId))) {
-      this.skip(id, { speakerId, lang, text, reason: 'direction', level, heading, voice, margin });
+      this.skip(id, { speakerId, lang, text, reason: 'direction', level, heading, voice, margin, held });
       this.report(heard, speakerId, { ...measured, reason: 'direction' });
       return;
     }
@@ -691,9 +758,32 @@ export class SoloConversation {
     // tell, nor speech the recognizer did not time. Until their voice is known, anything said
     // for them, which it is learned from.
     const voices = this.voices;
+    // Two or more talkers in it, as far as the recognizer can tell: only what is in our voices, once part of it clearly is.
+    const parts = voices && voice && details.words ? await this.judgeParts(speakerId, details.words, heard.clock, held) : undefined;
+    if (this.closed) return;
+    if (parts) {
+      const words = details.words!;
+      const ours = new Set(parts.flatMap((part) => (part.kept ? part.words : [])));
+      const kept = ours.size === words.length ? text : textOf(words.filter((word) => ours.has(word)), text, words.length);
+      if (speakerId === SOLO_ME) this.unlikeMine = 0;
+      this.reportVoices();
+      if (!held) this.learnOurs(speakerId, { level, heading, margin }, now);
+      this.deliver(id, speakerId, kept);
+      this.report(heard, speakerId, { ...measured, ...(kept !== text && { kept }) });
+      // What was left out can still be asked for, as a line of its own.
+      for (const part of parts) {
+        if (part.kept) continue;
+        part.id = this.options.newId();
+        const partVoice = part.print && { print: part.print, seconds: part.seconds };
+        const partText = textOf(part.words, text, words.length);
+        this.skip(part.id, { speakerId, lang, text: partText, reason: 'voice', level: speechLevel(part.samples), heading, voice: partVoice, margin, held, part: true });
+      }
+      this.reportParts(id, parts, text, words.length);
+      return;
+    }
     if (voices && !(voice ? voices.admits(speakerId, voice.print, voice.seconds, held) : !voices.checks(speakerId))) {
       const reason = !samples ? 'untimed' : !voice ? 'short' : 'voice';
-      this.skip(id, { speakerId, lang, text, reason, level, heading, voice, margin });
+      this.skip(id, { speakerId, lang, text, reason, level, heading, voice, margin, held });
       this.report(heard, speakerId, { ...measured, reason });
       if (held && speakerId === SOLO_ME && voice && reason === 'voice' && voice.seconds >= MIN_LEARN_SECONDS) this.hearUnlike();
       return;
@@ -711,13 +801,14 @@ export class SoloConversation {
     const { report } = this.options;
     if (!report) return;
     const { id, selection, text, details, clock, span, samples, heading, margin } = heard;
-    const { reason, level, place, seconds, likeness } = judged;
+    const { reason, level, place, seconds, likeness, kept } = judged;
     // On the conversation's clock, like everything else in the report.
-    const words = details.words?.map(({ text, start, end, language }) => ({
+    const words = details.words?.map(({ text, start, end, language, speaker }) => ({
       text,
       start: clock.toConversation(start),
       end: clock.toConversation(end, true),
       ...(language !== undefined && { language }),
+      ...(speaker !== undefined && { speaker }),
     }));
     report({
       type: 'line',
@@ -727,6 +818,7 @@ export class SoloConversation {
       held: this.talkMode === 'hold',
       side,
       text,
+      ...(kept !== undefined && { kept }),
       languages: Object.fromEntries(details.languages),
       ...(span && { start: span.start, end: span.end }),
       ...(words && { words }),
@@ -777,6 +869,107 @@ export class SoloConversation {
         if (!this.closed) this.options.report?.({ type: 'windows', id, windows });
       })
       .catch((error: unknown) => this.options.log.warn('talk report', error));
+  }
+
+  /**
+   * A line's words by who said them, when the recognizer heard more than one talker in it
+   * (see `SttWord.speaker`), each talker's with their sound: the stretches of their words,
+   * cut out around them like a line's (see PADDING) and put together. Nothing without the
+   * sound, or when a word is nobody's.
+   */
+  private partsOf(words: readonly SttWord[], clock: StreamClock): Part[] | undefined {
+    if (!this.audio || words.some((word) => word.speaker === undefined)) return undefined;
+    const stretches = stretchesOf(words);
+    const speakers = [...new Set(stretches.map((stretch) => stretch.speaker))];
+    if (speakers.length < 2) return undefined;
+    return speakers.map((speaker) => {
+      const samples = this.soundOf(stretches.filter((stretch) => stretch.speaker === speaker), clock);
+      return { speaker, words: words.filter((word) => word.speaker === speaker), samples, seconds: samples.length / AUDIO_SAMPLE_RATE, kept: false };
+    });
+  }
+
+  /** The sound of some stretches of words, cut out around them like a line's (see PADDING) and put together. */
+  private soundOf(stretches: readonly Stretch[], clock: StreamClock): Int16Array {
+    const audio = this.audio!;
+    return joined(stretches.map((stretch) => audio.slice(clock.toConversation(stretch.start) - PADDING, clock.toConversation(stretch.end, true) + PADDING)));
+  }
+
+  /**
+   * Whose words a line's are, by the voice of each talker's part of it as the recognizer
+   * told them apart, once one part is clearly in a voice that speaks for `speakerId` (see
+   * `VoiceFilter.recognizes`): that part is ours, and so is one clearly in the same voice,
+   * as the recognizer may tell one voice as two, or one too short to tell; the rest is
+   * someone else's, said over us. Nothing when the recognizer heard one talker, while
+   * anything said for that side goes through (see `VoiceFilter.checks`), or while no part
+   * is clearly ours: the line is then judged as a whole, which may be ours by a lower
+   * standard (see `VoiceFilter.admits`), as each part may be too short to be clear.
+   *
+   * Where voices overlap, the recognizer's word of who said what is approximate: a turn of
+   * someone's may land among ours and the other way round. So each turn long enough to tell
+   * (see MIN_LEARN_SECONDS) that is not all of its talker's part is judged by its own voice
+   * too: one among ours that is clearly not in our voice as settled here (see
+   * `VoiceFilter.unlike`) is left out on its own, one among someone else's that is clearly
+   * ours is kept on its own.
+   */
+  private async judgeParts(speakerId: SoloSpeaker, words: readonly SttWord[], clock: StreamClock, vouched: boolean): Promise<Part[] | undefined> {
+    const voices = this.voices;
+    if (!voices || !voices.checks(speakerId)) return undefined;
+    const parts = this.partsOf(words, clock);
+    if (!parts) return undefined;
+    for (const part of parts) {
+      part.print = await voices.printOf(part.samples);
+      if (this.closed) return undefined;
+      // As it sounded before anything was learned from it.
+      if (part.print && this.options.report) part.likeness = voices.describe(part.print);
+    }
+    const clear = parts.filter((part) => part.print && voices.recognizes(part.print, speakerId));
+    if (clear.length === 0) return undefined;
+    for (const part of parts) {
+      part.kept = clear.includes(part) || !part.print || clear.some((ours) => voices.sameVoice(part.print!, ours.print!));
+    }
+    const apart: Part[] = [];
+    const broken = new Set<Part>();
+    for (const stretch of stretchesOf(words)) {
+      const part = parts.find((candidate) => candidate.speaker === stretch.speaker)!;
+      if (stretch.words.length === part.words.length) continue;
+      const samples = this.soundOf([stretch], clock);
+      const seconds = samples.length / AUDIO_SAMPLE_RATE;
+      if (seconds < MIN_LEARN_SECONDS) continue;
+      const print = await voices.printOf(samples);
+      if (this.closed) return undefined;
+      if (!print) continue;
+      const ours = voices.recognizes(print, speakerId) || clear.some((other) => other !== part && voices.sameVoice(print, other.print!));
+      const kept = part.kept ? ours || !voices.unlike(speakerId, print) : ours;
+      if (kept === part.kept) continue;
+      part.words = part.words.filter((word) => !stretch.words.includes(word));
+      broken.add(part);
+      apart.push({ speaker: stretch.speaker, words: stretch.words, samples, seconds, print, ...(this.options.report && { likeness: voices.describe(print) }), kept, apart: true });
+    }
+    for (const part of broken) {
+      part.samples = this.soundOf(stretchesOf(part.words), clock);
+      part.seconds = part.samples.length / AUDIO_SAMPLE_RATE;
+    }
+    // How that voice sounds here is learned from each clear part, as from a line (see
+    // `VoiceFilter.admits`), unless some of it turned out to be someone else's.
+    for (const part of clear) if (!broken.has(part)) voices.admits(speakerId, part.print!, part.seconds, vouched);
+    return [...parts.filter((part) => part.words.length > 0), ...apart];
+  }
+
+  /** Notes in the talk report how a line in two or more voices was judged (see `judgeParts`). */
+  private reportParts(id: string, parts: readonly Part[], line: string, words: number): void {
+    this.options.report?.({
+      type: 'parts',
+      id,
+      parts: parts.map((part) => ({
+        speaker: part.speaker,
+        text: textOf(part.words, line, words),
+        seconds: part.seconds,
+        ...(part.likeness && { voice: part.likeness }),
+        kept: part.kept,
+        ...(part.id !== undefined && { id: part.id }),
+        ...(part.apart && { apart: true }),
+      })),
+    });
   }
 
   /** Learns from speech in one of the two people's voices how loud they are and where they sit. */
@@ -957,4 +1150,13 @@ export class SoloConversation {
       await deliverSpeech(synthesizer, { text: translation, lang: request.targetLang, signal }, id, send, log);
     }
   }
+}
+
+/**
+ * What some of a line's words say, in the order given: with spaces between them, unless the
+ * line itself, of `lineWords` words, was written with hardly any, as in Japanese.
+ */
+function textOf(words: readonly SttWord[], line: string, lineWords: number): string {
+  const spaced = (line.match(/ /g)?.length ?? 0) >= (lineWords - 1) / 2;
+  return words.map((word) => word.text).join(spaced ? ' ' : '');
 }

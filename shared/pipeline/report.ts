@@ -15,6 +15,8 @@ export interface ReportedWord {
   start: number;
   end: number;
   language?: string;
+  /** Who said it, as the recognizer told the talkers apart (see `SttWord.speaker`). */
+  speaker?: string;
 }
 
 /** A piece of a line, and whose voice it sounds like. */
@@ -39,6 +41,8 @@ export type TalkReportEntry =
       /** Whose it seemed: by its language in "auto", else the selected side. */
       side: 'me' | 'them' | 'other';
       text: string;
+      /** What of it was translated, when words of someone else's were left out (see 'parts'). */
+      kept?: string;
       /** How many words the recognizer tagged with each language. */
       languages: Record<string, number>;
       /** When it was said on the conversation's clock, with the padding the filters add, if the recognizer timed it. */
@@ -61,6 +65,25 @@ export type TalkReportEntry =
     }
   /** A line's voice, piece by piece: which parts of it were in whose voice. */
   | { type: 'windows'; id: string; windows: VoiceWindow[] }
+  /**
+   * A line the recognizer heard two or more talkers in, judged talker by talker: each one's
+   * words, how many seconds of speech and whose voice they sounded like, and whether they
+   * were kept. Words left out are skipped under an id of their own, which the phone may ask for.
+   */
+  | {
+      type: 'parts';
+      id: string;
+      parts: Array<{
+        speaker: string;
+        text: string;
+        seconds: number;
+        voice?: VoiceLikeness;
+        kept: boolean;
+        id?: string;
+        /** A stretch of words judged apart from the rest of its talker's, by its own voice. */
+        apart?: true;
+      }>;
+    }
   | { type: 'translation'; id: string; text: string }
   /**
    * A skipped line translated after all: the user asked, or it is in their voice as just
@@ -74,6 +97,12 @@ export type TalkReportEntry =
   | { type: 'loud' }
   /** What I said while holding the button sounded nothing like my recording: recording it again was suggested. */
   | { type: 'unlike-recording' }
+  /**
+   * My voice as heard here, taken up from earlier talks through the microphone listened
+   * with now: how many prints it was learned from, or 0 when there was none for it, so it
+   * is learned afresh.
+   */
+  | { type: 'my-voice-here'; prints: number }
   /**
    * With a recognizer paid by the second (see `SoloOptions.metered`): a piece of sound as
    * the gate in front of the recognizer judged it, how loud it was and whose voice it

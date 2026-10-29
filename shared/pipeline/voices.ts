@@ -21,6 +21,14 @@ export interface VoiceLikeness {
   partnerHere: number;
 }
 
+/** A voice as learned here (see LearnedVoice), to take it up again in a later conversation. */
+export interface LearnedPrints {
+  /** The sum of the voice prints it was learned from, the oldest slowly forgotten. */
+  sum: Float32Array;
+  /** How many prints that is, up to REMEMBERED_PRINTS. */
+  count: number;
+}
+
 /**
  * Shorter speech is too short to tell whose voice it is. Short speech has less reliable
  * voice prints, but is checked all the same: someone else's "OK" is not translated.
@@ -44,6 +52,16 @@ const SAME_VOICE = 0.4;
  * unlike mine how theirs does.
  */
 const ALIKE = 0.2;
+/**
+ * Once my voice as heard here is settled (see SETTLED_PRINTS), speech less like it than this
+ * is someone else's, however much like my recording, which a voice heard through earphones
+ * matches poorly: on such a phone, the user's own lines scored 0.43 to 0.73 against their
+ * voice here, others' speech over the button 0.18 to 0.35; against a voice here learned from
+ * one line only, the user's own scored as low as 0.25.
+ */
+const UNLIKE = 0.3;
+/** A voice heard here is settled, and told from others by UNLIKE, once learned from this many prints. */
+const SETTLED_PRINTS = 3;
 /** A learned voice follows the last few things said in it, as the voice and the place vary. */
 const REMEMBERED_PRINTS = 10;
 /**
@@ -104,6 +122,30 @@ export class VoiceFilter {
   }
 
   /**
+   * My voice as the phone hears it here, as learned so far, or undefined until it is: to
+   * take it up again in later conversations through the same microphone (see
+   * `useMyVoiceHere`). A copy.
+   */
+  get myVoiceHere(): LearnedPrints | undefined {
+    return this.mineHere.saved();
+  }
+
+  /**
+   * My voice as the phone heard it in earlier conversations, through the microphone it
+   * listens with now: it is learned further from there. Undefined forgets what was learned,
+   * e.g. as another microphone takes over. False for prints from another speaker model.
+   */
+  useMyVoiceHere(learned: LearnedPrints | undefined): boolean {
+    if (!learned) {
+      this.mineHere.forget();
+      return true;
+    }
+    if (learned.sum.length !== this.mine.length) return false;
+    this.mineHere.restore(learned);
+    return true;
+  }
+
+  /**
    * Whether speech for `side` must be in one of the two voices: for me always, for them
    * once their voice is known. Until then, theirs is learned from what is said for them.
    */
@@ -130,7 +172,12 @@ export class VoiceFilter {
    *
    * Speech `vouched` for, by whoever holds a button to talk, is that side's unless its voice
    * is nothing like theirs, or clearly the other one's: a voice here may be only somewhat
-   * like its recording (see ALIKE), and how it sounds here is learned from such speech.
+   * like its recording (see ALIKE). How it sounds here is learned from such speech only
+   * while nothing is known of that yet, as a first foothold: once it is, speech only
+   * somewhat like the voice is as likely someone else's, said over the button, and what is
+   * learned must not drift their way, or their voice passes for ours from then on. Once how
+   * it sounds here is settled, such speech is not even that side's unless it is somewhat
+   * like that too (see `unlike`): it is left for the user to ask for.
    */
   admits(side: string, print: Float32Array, seconds: number, vouched = false): boolean {
     // So that each is still told when the noise around changes how it sounds; only from
@@ -144,13 +191,25 @@ export class VoiceFilter {
       if (similarity(print, this.mine) >= SAME_VOICE) this.learn(SOLO_ME, print, seconds);
       return true;
     }
-    if (vouched && this.mayBe(side, print)) {
-      this.learn(side, print, seconds);
+    if (vouched && this.mayBe(side, print) && !this.unlike(side, print)) {
+      const here = side === SOLO_THEM ? this.partnerHere : this.mineHere;
+      if (!here.print) this.learn(side, print, seconds);
       return true;
     }
     if (this.checks(side) || this.isRejected(print)) return false;
     this.learnPartner(print, seconds);
     return true;
+  }
+
+  /**
+   * Whether a voice is clearly not `side`'s as that sounds here, once that is settled (see
+   * UNLIKE): as learned from a line or two it is still a poor likeness, so nothing is unlike
+   * it until then. For me by my voice here alone, which my recording matches poorly on some
+   * phones; for them by their voice as learned too, which is of speech heard here as well.
+   */
+  unlike(side: string, print: Float32Array): boolean {
+    if (side === SOLO_THEM) return this.partnerHere.settled && this.likePartner(print) < UNLIKE;
+    return this.mineHere.settled && this.mineHere.likeness(print) < UNLIKE;
   }
 
   /**
@@ -193,6 +252,11 @@ export class VoiceFilter {
     return this.isMine(print) || (side !== SOLO_ME && this.likePartner(print) >= SAME_VOICE);
   }
 
+  /** Whether two pieces of speech are clearly in the same voice. */
+  sameVoice(a: Float32Array, b: Float32Array): boolean {
+    return similarity(a, b) >= SAME_VOICE;
+  }
+
   /** Whether a voice is clearly mine. */
   isMine(print: Float32Array): boolean {
     return this.likeMine(print) >= SAME_VOICE;
@@ -218,12 +282,19 @@ export class VoiceFilter {
    * the one learned from what was said, nor mine, it means that one was someone else's:
    * theirs is this one from then on. A recorded voice stays: it just sounds different here.
    * Until theirs is known, a voice the user said was not theirs may be theirs after all.
+   *
+   * Said for me holding the button (`vouched`), it is my voice as heard here however unlike
+   * my recording it is, unless it is clearly theirs: a recording made somewhere else, or
+   * through another microphone, can be nothing like my voice through earphones in a crowd,
+   * and nothing else would teach how it sounds there.
    */
-  translated(side: string, print: Float32Array, seconds: number): void {
+  translated(side: string, print: Float32Array, seconds: number, vouched = false): void {
     const learned = side === SOLO_THEM && this.theirs?.known === 'learned';
     if (learned && !this.recognizes(print, side) && seconds >= MIN_LEARN_SECONDS) {
       this.theirs = { print: normalized(print), known: 'learned' };
       this.partnerHere.forget();
+    } else if (vouched && side !== SOLO_THEM) {
+      if (seconds >= MIN_LEARN_SECONDS && this.likePartner(print) < SAME_VOICE) this.mineHere.add(print);
     } else if (this.checks(side)) {
       this.learn(side, print, seconds);
     } else {
@@ -356,6 +427,11 @@ class LearnedVoice {
     return this.print ? similarity(print, this.print) : -1;
   }
 
+  /** Whether it is learned from enough to be a fair likeness of the voice (see SETTLED_PRINTS). */
+  get settled(): boolean {
+    return this.count >= SETTLED_PRINTS;
+  }
+
   add(print: Float32Array): void {
     if (!this.sum) {
       this.sum = new Float32Array(print);
@@ -366,6 +442,19 @@ class LearnedVoice {
       for (let i = 0; i < print.length; i++) this.sum[i] = this.sum[i]! * keep + print[i]!;
       this.count = Math.min(this.count + 1, REMEMBERED_PRINTS);
     }
+    this.print = normalized(this.sum);
+  }
+
+  /** What it was learned from, as a copy; undefined while it is unknown. */
+  saved(): LearnedPrints | undefined {
+    return this.sum && { sum: new Float32Array(this.sum), count: this.count };
+  }
+
+  /** Takes up a voice as learned before, e.g. in an earlier conversation. */
+  restore(learned: LearnedPrints): void {
+    const count = Number.isFinite(learned.count) ? Math.round(learned.count) : 1;
+    this.sum = new Float32Array(learned.sum);
+    this.count = Math.max(1, Math.min(count, REMEMBERED_PRINTS));
     this.print = normalized(this.sum);
   }
 
@@ -605,7 +694,8 @@ export function similarity(a: Float32Array, b: Float32Array): number {
   return dot;
 }
 
-function joined(chunks: readonly Int16Array[]): Int16Array {
+/** Pieces of sound, one after the other. */
+export function joined(chunks: readonly Int16Array[]): Int16Array {
   const all = new Int16Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
   let offset = 0;
   for (const chunk of chunks) {

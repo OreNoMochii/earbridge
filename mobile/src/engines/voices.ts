@@ -5,7 +5,7 @@
 
 import * as SecureStore from 'expo-secure-store';
 
-import type { VoicePrinter } from '../../../shared/pipeline/voices.ts';
+import type { LearnedPrints, VoicePrinter } from '../../../shared/pipeline/voices.ts';
 import EarbridgeVoice from '../../modules/earbridge-audio/src/EarbridgeVoiceModule.ts';
 import { fromBase64, toBase64 } from '../base64.ts';
 
@@ -22,6 +22,12 @@ export const VOICE_MODEL_FILE = MODEL.file;
 export const VOICE_MODEL_MB = 28;
 
 const MY_VOICE = 'earbridge.myVoice';
+/** Which microphones my voice is kept for as heard through them, as the secure storage cannot list what it keeps. */
+const MY_MICS = 'earbridge.myMics';
+/** Where my voice as heard through one microphone is kept. Ids are letters and digits, as keys must be. */
+const myVoiceThrough = (id: string) => `earbridge.myVoiceHere.${id}`;
+/** How many microphones my voice is kept for as heard through them: the ones used last. */
+const KEPT_MICS = 4;
 /** Who has a voice print saved: the secure storage cannot list what it keeps. */
 const PEOPLE = 'earbridge.people';
 /** Where one person's voice print is kept. Ids are letters and digits, as keys must be. */
@@ -113,13 +119,85 @@ export function readMyVoice(): KeptVoice | undefined {
   return readVoice(MY_VOICE);
 }
 
-/** Rejects if the phone could not store it. */
+/**
+ * Rejects if the phone could not store it. How it sounds through each microphone is
+ * learned afresh from then on.
+ */
 export async function saveMyVoice(print: Float32Array): Promise<void> {
+  await forgetMyVoiceHere();
   await writeVoice(MY_VOICE, print, Date.now());
 }
 
 export async function deleteMyVoice(): Promise<void> {
+  // How it sounds through each microphone first: my voice left on the phone can be deleted again.
+  await forgetMyVoiceHere();
   await SecureStore.deleteItemAsync(MY_VOICE);
+}
+
+// ---------------------------------------------------------------- my voice as heard here
+
+/** A microphone my voice is kept for, as heard through it. */
+interface KeptMic {
+  /** Letters and digits. */
+  id: string;
+  /** Which microphone, as the conversation names it. */
+  mic: string;
+  /** When my voice through it was last kept, in ms since 1970. */
+  saved: number;
+}
+
+/**
+ * My voice as heard through a microphone in earlier conversations, as the voice filter
+ * learned it there, unless that was with another speaker model or it can no longer be read.
+ */
+export function loadMyVoiceHere(mic: string): LearnedPrints | undefined {
+  const kept = listMics().find((other) => other.mic === mic);
+  const voice = kept && readRecord(myVoiceThrough(kept.id));
+  if (!voice) return undefined;
+  const { lines } = voice.record;
+  if (typeof lines !== 'number' || !(lines >= 1) || !voice.print.every(Number.isFinite)) return undefined;
+  return { sum: voice.print, count: lines };
+}
+
+/**
+ * Keeps my voice as heard through a microphone, for the next conversations through it:
+ * for the few microphones used last. Rejects if the phone could not store it.
+ */
+export async function saveMyVoiceHere(mic: string, learned: LearnedPrints): Promise<void> {
+  const mics = listMics();
+  const kept: KeptMic = { id: mics.find((other) => other.mic === mic)?.id ?? newId(), mic, saved: Date.now() };
+  const others = mics.filter((other) => other.id !== kept.id);
+  // Each print on the list before it is written and until it is deleted, so that forgetting
+  // them all leaves none behind.
+  for (const old of others.slice(KEPT_MICS - 1)) await SecureStore.deleteItemAsync(myVoiceThrough(old.id));
+  await writeMics([kept, ...others.slice(0, KEPT_MICS - 1)]);
+  await writeVoice(myVoiceThrough(kept.id), learned.sum, kept.saved, { lines: learned.count });
+}
+
+/** Forgets my voice as heard through every microphone. */
+async function forgetMyVoiceHere(): Promise<void> {
+  for (const kept of listMics()) await SecureStore.deleteItemAsync(myVoiceThrough(kept.id));
+  await SecureStore.deleteItemAsync(MY_MICS);
+}
+
+/** The microphones my voice is kept for, most recently first. */
+function listMics(): KeptMic[] {
+  try {
+    const mics: unknown = JSON.parse(SecureStore.getItem(MY_MICS) ?? '[]');
+    return Array.isArray(mics) ? mics.filter(isKeptMic).sort((a, b) => b.saved - a.saved) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeMics(mics: KeptMic[]): Promise<void> {
+  await SecureStore.setItemAsync(MY_MICS, JSON.stringify(mics), SECURE_OPTIONS);
+}
+
+function isKeptMic(value: unknown): value is KeptMic {
+  if (typeof value !== 'object' || value === null) return false;
+  const { id, mic, saved } = value as Record<string, unknown>;
+  return typeof id === 'string' && /^[a-z0-9]{1,40}$/.test(id) && typeof mic === 'string' && typeof saved === 'number';
 }
 
 // ---------------------------------------------------------------- people I talk with
@@ -183,14 +261,23 @@ function newId(): string {
 // ---------------------------------------------------------------- kept voice prints
 
 function readVoice(key: string): KeptVoice | undefined {
+  const voice = readRecord(key);
+  if (!voice) return undefined;
+  const { saved } = voice.record;
+  return { print: voice.print, saved: typeof saved === 'number' ? saved : undefined };
+}
+
+/** A voice print as kept, with whatever else was kept with it, unless it was made by another speaker model. */
+function readRecord(key: string): { print: Float32Array; record: Record<string, unknown> } | undefined {
   try {
     const kept: unknown = JSON.parse(SecureStore.getItem(key) ?? 'null');
     if (typeof kept !== 'object' || kept === null) return undefined;
-    const { model, print, saved } = kept as Record<string, unknown>;
+    const record = kept as Record<string, unknown>;
+    const { model, print } = record;
     if (model !== MODEL.file || typeof print !== 'string') return undefined;
     const bytes = fromBase64(print);
     if (bytes.length === 0 || bytes.length % 4 !== 0) return undefined;
-    return { print: new Float32Array(bytes.buffer), saved: typeof saved === 'number' ? saved : undefined };
+    return { print: new Float32Array(bytes.buffer), record };
   } catch {
     // Unreadable, e.g. Android reset its keystore: the voice has to be recorded again.
     return undefined;
@@ -198,9 +285,10 @@ function readVoice(key: string): KeptVoice | undefined {
 }
 
 /** Rejects if the phone could not store it. */
-async function writeVoice(key: string, print: Float32Array, saved: number): Promise<void> {
+async function writeVoice(key: string, print: Float32Array, saved: number, extra?: Record<string, unknown>): Promise<void> {
   const bytes = new Uint8Array(print.buffer, print.byteOffset, print.byteLength);
-  await SecureStore.setItemAsync(key, JSON.stringify({ model: MODEL.file, print: toBase64(bytes), saved }), SECURE_OPTIONS);
+  const record = { ...extra, model: MODEL.file, print: toBase64(bytes), saved };
+  await SecureStore.setItemAsync(key, JSON.stringify(record), SECURE_OPTIONS);
 }
 
 function voiceModule(): NonNullable<typeof EarbridgeVoice> {

@@ -433,6 +433,59 @@ describe('voices', () => {
     assert.equal(unknown.partner, 'unknown');
   });
 
+  it('learns my voice here from what was said holding the button and translated after all, however unlike my recording', () => {
+    const voices = new VoiceFilter(printer);
+    // Me through earphones in a crowd: nothing like my recording, made somewhere else.
+    assert.equal(voices.admits('me', print(2000), 2, true), false);
+    voices.translated('me', print(2000), 1, true);
+    assert.equal(voices.printHere('me'), undefined, 'too short to tell');
+    voices.translated('me', print(2000), 2);
+    assert.equal(voices.printHere('me'), undefined, 'not said holding the button');
+    voices.translated('me', print(2000), 2, true);
+    assert.deepEqual(rounded(voices.printHere('me')!), [0, 1, 0]);
+    assert.equal(voices.admits('me', print(2000), 2, true), true);
+    assert.equal(voices.admits('me', print(13000), 2), true, 'clearly like my voice here');
+    assert.equal(voices.judge(['me'], print(3000)), 'other', 'someone else, now that my voice here is known');
+
+    // Clearly theirs: not mine, held or not.
+    const theirs = new VoiceFilter(printer);
+    theirs.setPartner(print(3000));
+    theirs.translated('me', print(3000), 2, true);
+    assert.equal(theirs.printHere('me'), undefined);
+  });
+
+  it('takes up my voice as heard here in an earlier conversation, and learns it further from there', () => {
+    const before = new VoiceFilter(printer);
+    assert.equal(before.myVoiceHere, undefined);
+    before.translated('me', print(2000), 2, true);
+    before.translated('me', print(13000), 2, true);
+    const learned = before.myVoiceHere!;
+    assert.deepEqual([rounded(learned.sum), learned.count], [[0.1, 1.95, 0.296], 2]);
+    learned.sum.fill(0);
+    assert.deepEqual(rounded(before.myVoiceHere!.sum), [0.1, 1.95, 0.296], 'a copy');
+
+    const after = new VoiceFilter(printer);
+    assert.equal(after.admits('me', print(2000), 2, true), false, 'nothing like my recording');
+    assert.equal(after.useMyVoiceHere(before.myVoiceHere), true);
+    assert.deepEqual(rounded(after.printHere('me')!), rounded(before.printHere('me')!));
+    assert.equal(after.admits('me', print(2000), 2, true), true);
+    // As if it had been learned in this conversation.
+    before.translated('me', print(8000), 2, true);
+    after.translated('me', print(8000), 2, true);
+    assert.deepEqual(rounded(after.printHere('me')!), rounded(before.printHere('me')!));
+    assert.equal(after.myVoiceHere!.count, 3);
+    // Prints from another speaker model, which can't be compared: what was learned stays.
+    assert.equal(after.useMyVoiceHere({ sum: new Float32Array(4), count: 1 }), false);
+    assert.deepEqual(rounded(after.printHere('me')!), rounded(before.printHere('me')!));
+    // Never from more prints than it remembers.
+    assert.equal(after.useMyVoiceHere({ sum: print(2000), count: 50 }), true);
+    assert.equal(after.myVoiceHere!.count, 10);
+    // Another microphone, with nothing learned through it: learned afresh.
+    assert.equal(after.useMyVoiceHere(undefined), true);
+    assert.equal(after.printHere('me'), undefined);
+    assert.equal(after.myVoiceHere, undefined);
+  });
+
   it('tells the gate whose voice a piece of sound is in, once the voices to keep out are known', () => {
     const voices = new VoiceFilter(printer);
     assert.equal(voices.judge(['me'], print(1000)), 'ours');
@@ -919,6 +972,176 @@ describe('one phone in a noisy place', () => {
     );
   });
 
+  it('leaves out of a held line what someone else said over it, when the recognizer tells talkers apart', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, of, words } = soloSetup({ voices: printer, report: (entry) => entries.push(entry) });
+    solo.setTalkMode('hold');
+    assert.equal(stt.last.speakers, true, 'asked to tell the talkers apart');
+    solo.sendAudio(sound(2, 1000)); // me
+    solo.sendAudio(sound(2, 3000)); // someone else, over me
+    solo.sendAudio(sound(2, 1000)); // me again
+    const word = (text: string, start: number, speaker: string) => ({ text, start, end: start + 0.5, speaker });
+    const said = [word('Hello', 0.2, '0'), word('there.', 1.2, '0'), word('Hey', 2.2, '1'), word('you.', 3.2, '1'), word('Where', 4.2, '0'), word('is', 4.7, '0'), word('it?', 5.2, '0')];
+    stt.last.say('Hello there. Hey you. Where is it?', ['en', 'en', 'en', 'en', 'en', 'en', 'en'], { start: 0.2, end: 5.7, words: said });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => [m.id, m.speakerId, m.text]),
+      [['u1', 'me', 'Hello there. Where is it?']],
+    );
+    assert.deepEqual(of('skipped'), [{ type: 'skipped', id: 'u2', speakerId: 'me', lang: 'en-US', reason: 'voice' }]);
+    assert.equal(words(of('skipped')[0]!), undefined, 'not a line of its own to the recognizer');
+    const line = entries.find((e) => e.type === 'line');
+    assert.equal(line?.type === 'line' && line.kept, 'Hello there. Where is it?');
+    assert.deepEqual(
+      entries
+        .filter((e) => e.type === 'parts')
+        .map((e) => e.type === 'parts' && e.parts.map((part) => [part.speaker, part.text, Math.round(part.seconds * 10) / 10, part.kept, part.id])),
+      [
+        [
+          ['0', 'Hello there. Where is it?', 3.4, true, undefined],
+          ['1', 'Hey you.', 1.7, false, 'u2'],
+        ],
+      ],
+    );
+    // What was left out can still be asked for.
+    solo.accept('u2');
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => [m.id, m.text]),
+      [
+        ['u1', 'Hello there. Where is it?'],
+        ['u2', 'Hey you.'],
+      ],
+    );
+  });
+
+  it('keeps a held line whole when the recognizer tells one voice as two, or no part of it is clearly mine', async () => {
+    const { solo, stt, of } = soloSetup({ voices: printer });
+    solo.setTalkMode('hold');
+    solo.sendAudio(sound(2, 7000)); // me, as heard here
+    solo.sendAudio(sound(2, 3000)); // much the same voice, though nothing like my recording: told apart wrongly
+    const word = (text: string, start: number, speaker: string) => ({ text, start, end: start + 0.5, speaker });
+    stt.last.say('One two three four', ['en', 'en', 'en', 'en'], {
+      start: 0.2,
+      end: 3.7,
+      words: [word('One', 0.2, '0'), word('two', 1.2, '0'), word('three', 2.2, '1'), word('four', 3.2, '1')],
+    });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => m.text),
+      ['One two three four'],
+      'the second voice goes with the first, which is clearly mine',
+    );
+    assert.deepEqual(of('skipped'), []);
+
+    const next = soloSetup({ voices: printer });
+    next.solo.setTalkMode('hold');
+    next.solo.sendAudio(sound(3, 5000)); // me, only somewhat like my recording
+    next.solo.sendAudio(sound(1, 15000)); // and a voice the recognizer told apart, somewhat like it too
+    next.stt.last.say('One two three four', ['en', 'en', 'en', 'en'], {
+      start: 0.2,
+      end: 3.7,
+      words: [word('One', 0.2, '0'), word('two', 1.2, '0'), word('three', 2.2, '0'), word('four', 3.2, '1')],
+    });
+    await settle();
+    assert.deepEqual(
+      next.of('utterance').map((m) => m.text),
+      ['One two three four'],
+      'judged as a whole, as no part is clearly mine',
+    );
+    assert.deepEqual(next.of('skipped'), []);
+  });
+
+  it('judges a long turn within a part by its own voice, once my voice here is settled', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, of } = soloSetup({ voices: printer, report: (entry) => entries.push(entry) });
+    solo.setTalkMode('hold');
+    const word = (text: string, start: number, speaker: string, end = start + 0.5) => ({ text, start, end, speaker });
+    // Three lines in my voice as heard here settle it.
+    for (let i = 0; i < 3; i++) {
+      solo.sendAudio(sound(2, 7000));
+      stt.last.say('Yes.', ['en'], { start: i * 2, end: i * 2 + 2 });
+    }
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text), ['Yes.', 'Yes.', 'Yes.']);
+
+    // Someone talks over me, and the recognizer gives most of their words to my part.
+    solo.sendAudio(sound(2.5, 7000)); // 6–8.5 s: me
+    solo.sendAudio(sound(2.5, 2000)); // 8.5–11 s: someone else
+    solo.sendAudio(sound(2, 7000)); // 11–13 s: me
+    stt.last.say('Hello there friend. Hey you listen to me. Where is it?', Array(10).fill('en'), {
+      start: 6.2,
+      end: 12.8,
+      words: [
+        word('Hello', 6.2, '0'),
+        word('there', 7.0, '0'),
+        word('friend.', 7.8, '0'),
+        word('Hey', 8.6, '1', 9.0),
+        word('you', 9.1, '0'),
+        word('listen', 9.6, '0'),
+        word('to', 10.0, '0', 10.3),
+        word('me.', 10.4, '0', 10.9),
+        word('Where', 11.2, '1'),
+        word('is', 11.8, '1'),
+        word('it?', 12.3, '1'),
+      ],
+    });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => m.text).slice(3),
+      ['Hello there friend. Hey Where is it?'],
+      'their long turn is left out, their short word cannot be told',
+    );
+    assert.deepEqual(
+      of('skipped').map((m) => [m.id, m.reason]),
+      [['u5', 'voice']],
+    );
+
+    // The other way round: my long turn among their words is kept.
+    solo.sendAudio(sound(2.5, 2000)); // 13–15.5 s: someone else
+    solo.sendAudio(sound(2, 7000)); // 15.5–17.5 s: me
+    solo.sendAudio(sound(0.5, 2000)); // 17.5–18 s: someone else
+    stt.last.say('Listen to me now. Yes. I am right here.', Array(9).fill('en'), {
+      start: 13.2,
+      end: 17.5,
+      words: [
+        word('Listen', 13.2, '0'),
+        word('to', 13.8, '0'),
+        word('me', 14.3, '0'),
+        word('now.', 14.8, '0', 15.3),
+        word('Yes.', 15.6, '1', 15.9),
+        word('I', 16.0, '0', 16.3),
+        word('am', 16.4, '0', 16.7),
+        word('right', 16.8, '0', 17.0),
+        word('here.', 17.1, '0', 17.5),
+      ],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(4), ['Yes. I am right here.']);
+    assert.deepEqual(
+      of('skipped').map((m) => [m.id, m.reason]).slice(1),
+      [['u7', 'voice']],
+    );
+    solo.accept('u5');
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(5), ['you listen to me.'], 'what was left out can still be asked for');
+    assert.deepEqual(
+      entries.filter((e) => e.type === 'parts').map((e) => e.type === 'parts' && e.parts.map((part) => [part.speaker, part.text, part.kept, part.apart ?? false, part.id])),
+      [
+        [
+          ['0', 'Hello there friend.', true, false, undefined],
+          ['1', 'Hey Where is it?', true, false, undefined],
+          ['0', 'you listen to me.', false, true, 'u5'],
+        ],
+        [
+          ['0', 'Listen to me now.', false, false, 'u7'],
+          ['1', 'Yes.', true, false, undefined],
+          ['0', 'I am right here.', true, true, undefined],
+        ],
+      ],
+    );
+  });
+
   it('keeps their voice when told they are talking', async () => {
     const { solo, stt, of, words } = soloSetup({ voices: printer });
     solo.usePartner(print(2000));
@@ -1382,6 +1605,81 @@ describe('one phone in a noisy place', () => {
     assert.deepEqual(of('error'), []);
   });
 
+  it('learns my voice here from held speech only somewhat like my recording just until it is known', async () => {
+    const { solo, stt, of, words } = soloSetup({ voices: printer });
+    solo.setTalkMode('hold');
+    solo.sendAudio(sound(2, 1000)); // me, as recorded
+    solo.sendAudio(sound(2, 5000)); // somewhat like my recording: me, or someone talking over me
+    solo.sendAudio(sound(2, 3000)); // like neither my recording nor my voice here, but like that last voice
+    stt.last.say('One', ['en'], { start: 0, end: 2 });
+    stt.last.say('Two', ['en'], { start: 2, end: 4 });
+    stt.last.say('Three', ['en'], { start: 4, end: 6 });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => m.text),
+      ['One', 'Two'],
+    );
+    assert.deepEqual(
+      of('skipped').map((m) => [words(m), m.reason]),
+      [['Three', 'voice']],
+      'not learned from the second voice, so the third is not taken for mine',
+    );
+
+    // While nothing is known of my voice here, such speech is where to start.
+    const next = soloSetup({ voices: printer });
+    next.solo.setTalkMode('hold');
+    next.solo.sendAudio(sound(2, 5000));
+    next.solo.sendAudio(sound(2, 15000)); // like that, but hardly like my recording
+    next.stt.last.say('One', ['en'], { start: 0, end: 2 });
+    next.stt.last.say('Two', ['en'], { start: 2, end: 4 });
+    await settle();
+    assert.deepEqual(
+      next.of('utterance').map((m) => m.text),
+      ['One', 'Two'],
+    );
+    assert.deepEqual(next.of('skipped'), []);
+  });
+
+  it('skips held speech somewhat like my recording but unlike my voice here, once that is settled', async () => {
+    const { solo, stt, of, words } = soloSetup({ voices: printer });
+    solo.setTalkMode('hold');
+    solo.sendAudio(sound(2, 7000)); // me, as heard here
+    solo.sendAudio(sound(2, 10000)); // someone else, somewhat like my recording and nothing like my voice here
+    stt.last.say('One', ['en'], { start: 0, end: 2 });
+    stt.last.say('Two', ['en'], { start: 2, end: 4 });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => m.text),
+      ['One', 'Two'],
+      'passes while my voice here is known from one line only',
+    );
+    solo.sendAudio(sound(2, 7000));
+    solo.sendAudio(sound(2, 7000));
+    solo.sendAudio(sound(2, 10000));
+    stt.last.say('Three', ['en'], { start: 4, end: 6 });
+    stt.last.say('Four', ['en'], { start: 6, end: 8 });
+    stt.last.say('Five', ['en'], { start: 8, end: 10 });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => m.text),
+      ['One', 'Two', 'Three', 'Four'],
+    );
+    assert.deepEqual(
+      of('skipped').map((m) => [words(m), m.reason]),
+      [['Five', 'voice']],
+      'my voice here is settled from three lines, and this is nothing like it',
+    );
+    // Clearly my recording still passes whatever my voice here says.
+    solo.sendAudio(sound(2, 1000));
+    stt.last.say('Six', ['en'], { start: 10, end: 12 });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(-1), ['Six']);
+    // What was skipped can still be asked for.
+    solo.accept(of('skipped')[0]!.id);
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(-1), ['Five']);
+  });
+
   it('takes held speech for mine when it is only somewhat like my voice, and says once when it is nothing like it', async () => {
     const entries: TalkReportEntry[] = [];
     const { solo, stt, of, words } = soloSetup({ voices: printer, report: (entry) => entries.push(entry) });
@@ -1413,6 +1711,65 @@ describe('one phone in a noisy place', () => {
       entries.filter((e) => e.type === 'unlike-recording'),
       [{ type: 'unlike-recording' }],
     );
+  });
+
+  it('learns my voice here from held lines translated after all, and takes it up in the next conversation', async () => {
+    const { solo, stt, of, words } = soloSetup({ voices: printer });
+    solo.setTalkMode('hold');
+    solo.sendAudio(sound(4, 2000)); // me through earphones in a crowd: nothing like my recording
+    stt.last.say('Hello', ['en'], { start: 0, end: 2 });
+    await settle();
+    assert.deepEqual(
+      of('skipped').map((m) => [words(m), m.reason]),
+      [['Hello', 'voice']],
+    );
+    solo.accept(of('skipped')[0]!.id);
+    stt.last.say('Where is the station', ['en'], { start: 2, end: 4 });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => [m.speakerId, m.text]),
+      [
+        ['me', 'Hello'],
+        ['me', 'Where is the station'],
+      ],
+    );
+    assert.equal(of('skipped').length, 1);
+    assert.deepEqual([rounded(solo.myVoiceHere!.sum), solo.myVoiceHere!.count], [[0, 1, 0], 1]);
+
+    // Through the same microphone, the next time.
+    const entries: TalkReportEntry[] = [];
+    const next = soloSetup({ voices: printer, report: (entry) => entries.push(entry) });
+    assert.equal(next.solo.useMyVoiceHere(solo.myVoiceHere), true);
+    next.solo.setTalkMode('hold');
+    next.solo.sendAudio(sound(2, 13000));
+    next.stt.last.say('Good morning', ['en'], { start: 0, end: 2 });
+    await settle();
+    assert.deepEqual(
+      next.of('utterance').map((m) => [m.speakerId, m.text]),
+      [['me', 'Good morning']],
+    );
+    assert.deepEqual(
+      entries.filter((e) => e.type === 'my-voice-here'),
+      [{ type: 'my-voice-here', prints: 1 }],
+    );
+    assert.equal(soloSetup().solo.useMyVoiceHere(solo.myVoiceHere), false, 'voices not checked');
+
+    // Hands-free, nobody says whose a line is: translating it after all teaches nothing of a voice so unlike mine.
+    const free = soloSetup({ voices: printer });
+    free.solo.sendAudio(sound(4, 2000));
+    free.stt.last.say('Hello', ['en'], { start: 0, end: 2 });
+    await settle();
+    free.solo.accept(free.of('skipped')[0]!.id);
+    free.stt.last.say('Where is the station', ['en'], { start: 2, end: 4 });
+    await settle();
+    assert.deepEqual(
+      free.of('skipped').map((m) => [free.words(m), m.reason]),
+      [
+        ['Hello', 'voice'],
+        ['Where is the station', 'voice'],
+      ],
+    );
+    assert.equal(free.solo.myVoiceHere, undefined);
   });
 
   it('reports each line, whose voice it sounds like piece by piece, and why it was skipped, when asked', async () => {

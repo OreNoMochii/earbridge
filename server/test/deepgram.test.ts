@@ -120,7 +120,7 @@ describe('Deepgram live transcription', () => {
   const deepgram = new FakeDeepgram();
   const opened: Array<{ stream: SttStream; events: Recorder }> = [];
 
-  function open(language: string) {
+  function open(language: string, speakers?: boolean) {
     const provider = new DeepgramProvider({
       apiKey: 'dg-test-key',
       model: 'nova-3',
@@ -130,7 +130,7 @@ describe('Deepgram live transcription', () => {
       keyHint: 'Check DEEPGRAM_API_KEY on the server.',
     });
     const events = new Recorder();
-    const stream = provider.open({ language }, events);
+    const stream = provider.open({ language, ...(speakers !== undefined && { speakers }) }, events);
     opened.push({ stream, events });
     return { stream, events };
   }
@@ -202,6 +202,37 @@ describe('Deepgram live transcription', () => {
       { text: 'Hola amigo', isFinal: true, speechFinal: true, fromFinalize: false, wordLanguages: ['es', 'es'] },
       { text: 'Bonjour', isFinal: false, speechFinal: false, fromFinalize: false, wordLanguages: ['fr'] },
     ]);
+  });
+
+  it('tells the talkers apart when asked, labelling each word by connection and talker', async () => {
+    const { events } = open('multi', true);
+    await eventually(() => events.count('live'));
+    const { socket, url } = deepgram.connections[0]!;
+    assert.equal(url.searchParams.get('diarize'), 'true');
+    socket.send(
+      JSON.stringify(
+        results('Hello there', { is_final: true, speech_final: true }, [
+          { word: 'hello', punctuated_word: 'Hello', start: 0.1, end: 0.4, speaker: 0 },
+          { word: 'there', punctuated_word: 'there', start: 0.5, end: 0.8, speaker: 1 },
+          { word: 'hm', start: 0.9, end: 1.0 },
+        ]),
+      ),
+    );
+    await eventually(() => events.results.length === 1);
+    assert.deepEqual(
+      events.results[0]!.words?.map(({ text, speaker }) => [text, speaker]),
+      [
+        ['Hello', '1:0'],
+        ['there', '1:1'],
+        ['hm', undefined],
+      ],
+    );
+  });
+
+  it('does not ask who said what unless told to', async () => {
+    const { events } = open('multi');
+    await eventually(() => events.count('live'));
+    assert.equal(deepgram.connections[0]!.url.searchParams.get('diarize'), null);
   });
 
   it('finalizes audio sent while connecting once the connection is up', async () => {

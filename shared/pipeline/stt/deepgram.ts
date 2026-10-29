@@ -51,7 +51,7 @@ export class DeepgramProvider implements SttProvider {
   }
 
   open(options: SttStreamOptions, events: SttEvents): SttStream {
-    const stream = new DeepgramStream(this.options, options.language, events);
+    const stream = new DeepgramStream(this.options, options, events);
     stream.connect();
     return stream;
   }
@@ -64,6 +64,8 @@ interface DeepgramWord {
   /** Seconds since the start of the connection's audio. */
   start?: number;
   end?: number;
+  /** Who said it, counted from 0 within the connection, when asked to tell talkers apart. */
+  speaker?: number;
 }
 
 interface DeepgramMessage {
@@ -79,6 +81,7 @@ interface DeepgramMessage {
 class DeepgramStream implements SttStream {
   private readonly options: DeepgramOptions;
   private readonly language: string;
+  private readonly speakers: boolean;
   private readonly events: SttEvents;
   private model: string;
   private socket: DeepgramSocket | undefined;
@@ -92,20 +95,24 @@ class DeepgramStream implements SttStream {
   private finalizeWhenOpen = false;
   private lastSentAt = 0;
   private reconnects = 0;
+  /** Connections made so far: each counts its talkers from 0 again. */
+  private connections = 0;
   private closing = false;
   private finished = false;
   private keepAliveTimer: ReturnType<typeof setInterval> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private closeTimer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(options: DeepgramOptions, language: string, events: SttEvents) {
+  constructor(options: DeepgramOptions, stream: SttStreamOptions, events: SttEvents) {
     this.options = options;
-    this.language = language;
+    this.language = stream.language;
+    this.speakers = stream.speakers === true;
     this.events = events;
     this.model = options.model;
   }
 
   connect(): void {
+    this.connections += 1;
     if (this.reconnects === 0) this.events.onStatus('connecting'); // else scheduleReconnect reported it
     const socket: DeepgramSocket = this.options.openSocket(this.url(), this.options.apiKey, {
       open: () => {
@@ -207,6 +214,7 @@ class DeepgramStream implements SttStream {
       endpointing: '300',
       utterance_end_ms: '1000',
       vad_events: 'true',
+      ...(this.speakers && { diarize: 'true' }),
     });
     return `${this.options.url ?? 'wss://api.deepgram.com/v1/listen'}?${params}`;
   }
@@ -258,7 +266,17 @@ class DeepgramStream implements SttStream {
         const text = word.punctuated_word ?? word.word;
         if (typeof text !== 'string' || !isNumber(word.start) || !isNumber(word.end)) return [];
         const language = typeof word.language === 'string' ? baseLanguage(word.language) : undefined;
-        return [{ text, start: offset + word.start, end: offset + word.end, ...(language !== undefined && { language }) }];
+        // Each connection counts its talkers from 0 again: the label tells the connection too.
+        const speaker = isNumber(word.speaker) ? `${this.connections}:${word.speaker}` : undefined;
+        return [
+          {
+            text,
+            start: offset + word.start,
+            end: offset + word.end,
+            ...(language !== undefined && { language }),
+            ...(speaker !== undefined && { speaker }),
+          },
+        ];
       });
     }
     this.events.onResult(result);

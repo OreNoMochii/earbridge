@@ -3,6 +3,7 @@
 // conversation screen works the same either way.
 
 import type { Spatial } from '../../../shared/pipeline/direction.ts';
+import type { LearnedPrints } from '../../../shared/pipeline/voices.ts';
 import type { ClientMessage, ServerMessage } from '../../../shared/protocol.ts';
 import type { ConnectionState, EndReason } from '../connection.ts';
 
@@ -33,4 +34,12 @@ export interface Backend {
    * voices like it; undefined until it is learned.
    */
   voiceHere?(side: 'me' | 'them'): Float32Array | undefined;
+  /** My voice as the phone hears it here, as learned so far: to take it up again next time. */
+  myVoiceHere?(): LearnedPrints | undefined;
+  /**
+   * My voice as the phone heard it in earlier conversations through the microphone it
+   * listens with now, to learn further from there; undefined forgets what was learned, as
+   * for another microphone. Taken up once the conversation starts, when it has not yet.
+   */
+  useMyVoiceHere?(learned: LearnedPrints | undefined): void;
 }

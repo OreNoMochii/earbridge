@@ -1,0 +1,7 @@
+venv/
+model/
+recording.wav
+clips/*.wav
+clips/*.json
+*.run.jsonl
+results*.txt

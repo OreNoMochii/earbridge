@@ -40,7 +40,15 @@ import type { MicChange, TalkReport } from './engines/talk-report.ts';
 import type { InAppOptions } from './engines/in-app-backend.ts';
 import { prepareKeys } from './engines/keys.ts';
 import { prepareLocal } from './engines/local.ts';
-import { VOICE_MODEL_FILE, listPeople, loadMyVoice, readPersonVoice, savePerson } from './engines/voices.ts';
+import {
+  VOICE_MODEL_FILE,
+  listPeople,
+  loadMyVoice,
+  loadMyVoiceHere,
+  readPersonVoice,
+  saveMyVoiceHere,
+  savePerson,
+} from './engines/voices.ts';
 import type { SavedPerson } from './engines/voices.ts';
 import { plainLanguageName } from './language-names.ts';
 import { serverLabel, socketUrl } from './server-url.ts';
@@ -209,6 +217,12 @@ export class LiveSession {
   private report: TalkReport | undefined;
   /** My voice print, when the microphone may keep only some voices (see keptVoices). */
   private myPrint: Float32Array | undefined;
+  /** The microphone my voice as heard here is learned through, to keep it for the next talks through it. */
+  private hereMic: string | undefined;
+  /** My voice as heard here, as last kept or taken up (see keepMyVoiceHere). */
+  private keptHere: Float32Array | undefined;
+  /** Keeping it, one time after the other. */
+  private keepingHere: Promise<void> = Promise.resolve();
   /** What the microphone was last asked to keep, in short, so that the talk report notes each change. */
   private isolationNoted: string | undefined;
   private toldSeparating = false;
@@ -392,6 +406,7 @@ export class LiveSession {
 
     if (this.separatesVoices()) this.myPrint = loadMyVoice();
     this.backend = this.createBackend();
+    this.takeUpMyVoiceHere(mic.input);
     this.backend.start();
   }
 
@@ -666,6 +681,7 @@ export class LiveSession {
     }
     // A line may have taught how one of the two voices sounds here (see updateIsolation).
     this.updateIsolation();
+    this.keepMyVoiceHere();
   }
 
   private onSkipped(message: SkippedMessage): void {
@@ -797,6 +813,42 @@ export class LiveSession {
     const mineHere = here('me');
     const theirsHere = here('them');
     return { model, prints: learned([mine, theirs, mineHere, theirsHere]), passUnmatched: !mineHere || !theirsHere };
+  }
+
+  /**
+   * Takes up my voice as heard through this microphone in earlier talks, to learn further
+   * from there: a recording made somewhere else, or through another microphone, can sound
+   * nothing like it. Only where the phone itself tells our voices apart.
+   */
+  private takeUpMyVoiceHere(input: CaptureInput): void {
+    const { settings } = this;
+    const backend = this.backend;
+    if (!backend?.useMyVoiceHere || settings.mode !== 'solo' || !settings.onlyOurVoices) return;
+    this.hereMic = micId(input);
+    backend.useMyVoiceHere(loadMyVoiceHere(this.hereMic));
+    this.keptHere = backend.voiceHere?.('me');
+  }
+
+  /** Keeps my voice as heard here once a line taught more of it, for the next talks through this microphone. */
+  private keepMyVoiceHere(): void {
+    const mic = this.hereMic;
+    const print = this.backend?.voiceHere?.('me');
+    if (mic === undefined || !print || print === this.keptHere) return;
+    this.keptHere = print;
+    const learned = this.backend?.myVoiceHere?.();
+    // Not kept, it is learned afresh next time.
+    if (learned) this.keepingHere = this.keepingHere.then(() => saveMyVoiceHere(mic, learned)).catch(() => {});
+  }
+
+  /**
+   * Listening through another microphone: my voice is kept as heard through the one
+   * before, and taken up as heard through this one.
+   */
+  private switchMyVoiceHere(input: CaptureInput): void {
+    if (this.hereMic === undefined || micId(input) === this.hereMic) return;
+    this.keepMyVoiceHere();
+    this.takeUpMyVoiceHere(input);
+    this.updateIsolation();
   }
 
   /** Has the microphone keep the voices of the moment (see keptVoices), noting a change in the talk report. */
@@ -1145,6 +1197,7 @@ export class LiveSession {
     }
     if (this.ended) return;
     this.report?.note({ type: 'mic', input, change });
+    this.switchMyVoiceHere(input);
     this.update({ micLabel: micLabel(input) });
     this.updateMicSwitch();
     if (wanted && input.input !== 'earphones') {
@@ -1245,6 +1298,11 @@ function markSkipped(
       ? { ...entry, skipped: { ...entry.skipped, state } }
       : entry,
   );
+}
+
+/** Which microphone it is, e.g. to keep my voice as heard through each. */
+function micId(input: CaptureInput): string {
+  return `${input.input}:${input.name}`;
 }
 
 function micLabel(input: CaptureInput): string {

@@ -9,6 +9,8 @@ import type { SessionDeps } from '../src/session.ts';
 
 export class FakeSttStream implements SttStream {
   readonly language: string;
+  /** Asked to tell talkers apart. */
+  readonly speakers: boolean;
   readonly events: SttEvents;
   readonly audio: Uint8Array[] = [];
   finalized = 0;
@@ -16,8 +18,9 @@ export class FakeSttStream implements SttStream {
   /** Every complete utterance heard, by this stream and the others of its provider. */
   private readonly said: string[];
 
-  constructor(language: string, events: SttEvents, said: string[] = []) {
+  constructor(language: string, events: SttEvents, said: string[] = [], speakers = false) {
     this.language = language;
+    this.speakers = speakers;
     this.events = events;
     this.said = said;
   }
@@ -54,7 +57,7 @@ export class FakeSttProvider implements SttProvider {
   readonly said: string[] = [];
 
   open(options: SttStreamOptions, events: SttEvents): SttStream {
-    const stream = new FakeSttStream(options.language, events, this.said);
+    const stream = new FakeSttStream(options.language, events, this.said, options.speakers === true);
     this.streams.push(stream);
     events.onStatus('connecting');
     return stream;

@@ -68,6 +68,8 @@ export function SettingsScreen({ settings, onChange, onDone, onKeys, onVoices, c
     engine === 'keys'
       ? ' Once your voice has been heard here, other voices are not even sent to Deepgram, so they can’t be translated after all.'
       : '';
+  // Deepgram tells talkers apart for about a fifth more per minute: what someone says over one of us is left out.
+  const apart = engine === 'keys' ? ' Deepgram is also asked who said each word (about a fifth more per minute), so what someone says over you is left out.' : '';
   const keysSaved = settings.deepgramKey.trim() !== '' && settings.deepinfraKey.trim() !== '';
 
   const setOnlyOurVoices = (on: boolean) => {
@@ -177,7 +179,7 @@ export function SettingsScreen({ settings, onChange, onDone, onKeys, onVoices, c
           />
           <SwitchRow
             title="Only our two voices"
-            description={`Shows and translates only you two: your recorded voice, and theirs, learned as they talk.${notHere}${unsent}`}
+            description={`Shows and translates only you two: your recorded voice, and theirs, learned as they talk.${notHere}${unsent}${apart}`}
             value={voices && myVoice && settings.onlyOurVoices}
             disabled={!voices}
             onChange={setOnlyOurVoices}

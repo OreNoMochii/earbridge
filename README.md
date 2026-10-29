@@ -213,23 +213,27 @@ Gradle: `EXPO_PUBLIC_SERVER_URL=http://192.168.1.20:8787 ./gradlew assembleRelea
 Don't build API keys into the app: anyone who has the app could read them. Each person types their own under **My
 own API keys**.
 
+Notes from building on a Mac:
+
+- Gradle finds no Java on its own on macOS: `export JAVA_HOME=$(/usr/libexec/java_home -v 17)` first (with Homebrew's
+  OpenJDK 17, `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`).
+- `./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a` builds for 64-bit ARM phones only, in a third of
+  the time and size.
+- `EXPO_PUBLIC_TALK_REPORT=1 ./gradlew assembleRelease` makes a build that writes a report of each conversation (who was
+  heard, what was skipped and why) to `/sdcard/Android/data/app.earbridge.mobile/files/reports/`, to read with
+  `adb pull`. See `mobile/src/engines/talk-report.ts`.
+- A change under `shared/` alone does not make Gradle rebuild the JavaScript bundle: the build succeeds in seconds
+  with the old code inside. Delete `mobile/android/app/build/generated/sourcemaps/react/release` first, and check that
+  the output shows `> Task :app:createBundleReleaseJsAndAssets`.
+
 ### iPhone
 
-The app is set up for iPhone too, but it hasn't been built or tested on one yet. Building it needs a Mac with Xcode,
-and an iPhone connected to it with Developer Mode turned on (**Settings → Privacy & Security**):
-
-```sh
-cd mobile
-npm install
-npx expo run:ios --device --configuration Release
-```
-
-**On this phone** isn't available on iPhone yet: choose **My own API keys** or **EarBridge server**. When the app
-first connects to a server on your Wi-Fi, allow it to use the local network.
-
-With a free Apple account, the app stops opening after 7 days, until you install it again. To hand it out through
-TestFlight or the App Store, you need the Apple Developer Program, which costs $99 a year. With that membership,
-[EAS Build](https://docs.expo.dev/build/introduction/) can also build the app in the cloud, without a Mac.
+The app is set up for iPhone too, but it hasn't been built or tested on one yet. [docs/iphone.md](docs/iphone.md)
+explains the two ways to build it: on a Mac with Xcode, installed over a cable with a free Apple ID (the app then runs
+for 7 days at a time), or in the cloud with EAS Build and a paid Apple Developer account. It also lists what is
+missing on iPhone: **On this phone**, and everything under **Voices** (telling the two voices from everyone else's,
+*Separate voices*, leaving out what someone said over a held line), which lives in an Android-only module for now.
+Choose **My own API keys** or **EarBridge server**, and **Hold to talk** in noisy places.
 
 ## Deploying
 
@@ -420,6 +424,13 @@ The phone app imports the settings, speech queue, resampler, protocol and langua
 `shared/`, so changes there affect both apps. For **My own API keys** and **On this phone**, it also runs the server's
 conversation, speech recognition, translation and voice code, from `shared/pipeline/`.
 
+### Measuring the voice filters
+
+[`tools/voice-rig/`](tools/voice-rig) plays synthetic clips (two macOS voices, with and without a crowd's chatter)
+through the real pipeline with the real recognizer and voice prints on a Mac, and counts how many of each talker's
+words would have been translated. See its README. The filters themselves are in `shared/pipeline/voices.ts` (whose
+voice a stretch of speech is in) and `shared/pipeline/solo.ts` (what is done with each line).
+
 ### Another speech recognizer, translator or voice
 
 To use another service, implement one of these interfaces and pass it to `createApp` in `server/src/index.ts`:
@@ -436,7 +447,8 @@ word. See `AUTO_DETECT_BASES` in `shared/languages.ts`.
 
 ## Roadmap
 
-- Test the phone app on real phones with Bluetooth earphones, and build it for iPhone.
+- Test the phone app on real phones with Bluetooth earphones, and build it for iPhone
+  ([docs/iphone.md](docs/iphone.md)): the voice filters need the Android module's speaker model ported to Swift.
 - **On this phone** for iPhone, with Apple's on-device speech recognition and translation. See
   [docs/on-device.md](docs/on-device.md).
 - Open models, such as Whisper and Gemma, on the phone: for the languages and phones that the built-in engines don't

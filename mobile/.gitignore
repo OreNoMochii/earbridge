@@ -42,3 +42,6 @@ yarn-error.*
 
 # build output of the local native module
 modules/*/android/build/
+
+# EAS credentials, if ever used
+credentials.json

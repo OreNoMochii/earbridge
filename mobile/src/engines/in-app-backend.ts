@@ -9,7 +9,7 @@ import { SoloConversation } from '../../../shared/pipeline/solo.ts';
 import type { SttProvider } from '../../../shared/pipeline/stt/types.ts';
 import type { Translator } from '../../../shared/pipeline/translate/types.ts';
 import type { SpeechSynthesizer } from '../../../shared/pipeline/voice/types.ts';
-import type { VoicePrinter } from '../../../shared/pipeline/voices.ts';
+import type { LearnedPrints, VoicePrinter } from '../../../shared/pipeline/voices.ts';
 import type { ClientMessage, ServerMessage } from '../../../shared/protocol.ts';
 import type { Backend, BackendEvents } from './backend.ts';
 
@@ -52,6 +52,8 @@ export class InAppBackend implements Backend {
   private readonly preparing = new AbortController();
   private pipeline: Pipeline | undefined;
   private solo: SoloConversation | undefined;
+  /** My voice as heard here in earlier conversations, or none, to take up once this one starts. */
+  private voiceHereToUse: { learned: LearnedPrints | undefined } | undefined;
   private lastId = 0;
   private stopped = false;
 
@@ -101,6 +103,15 @@ export class InAppBackend implements Backend {
     return this.solo?.voiceHere(side);
   }
 
+  myVoiceHere(): LearnedPrints | undefined {
+    return this.solo?.myVoiceHere;
+  }
+
+  useMyVoiceHere(learned: LearnedPrints | undefined): void {
+    if (this.solo) this.solo.useMyVoiceHere(learned);
+    else this.voiceHereToUse = { learned };
+  }
+
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
@@ -147,6 +158,8 @@ export class InAppBackend implements Backend {
       ...(pipeline.metered && { metered: true }),
       ...(options.report && { report: options.report }),
     });
+    if (this.voiceHereToUse) solo.useMyVoiceHere(this.voiceHereToUse.learned);
+    this.voiceHereToUse = undefined;
     this.solo = solo;
     this.emit({
       type: 'ready',

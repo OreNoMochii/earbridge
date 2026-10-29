@@ -10,6 +10,12 @@ export interface SttWord {
   end: number;
   /** Its language tag (a base code like "en"), when the recognizer gives one. */
   language?: string;
+  /**
+   * Who said it, when the recognizer tells the stream's talkers apart (see
+   * `SttStreamOptions.speakers`): a label that stays one talker's through the stream, and
+   * says nothing of who that is.
+   */
+  speaker?: string;
 }
 
 export interface SttResult {
@@ -47,6 +53,11 @@ export interface SttEvents {
 export interface SttStreamOptions {
   /** BCP-47 language code, or "multi" for automatic multilingual recognition. */
   language: string;
+  /**
+   * Tell the talkers apart, labelling each word by who said it (see `SttWord.speaker`),
+   * where the recognizer can; it may charge more for that.
+   */
+  speakers?: boolean;
 }
 
 export interface SttStream {
