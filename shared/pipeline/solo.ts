@@ -927,7 +927,9 @@ export class SoloConversation {
    * (see MIN_LEARN_SECONDS) that is not all of its talker's part is judged by its own voice
    * too: one among ours that is clearly not in our voice as settled here (see
    * `VoiceFilter.unlike`) is left out on its own, one among someone else's that is clearly
-   * ours is kept on its own.
+   * ours is kept on its own. A part too short to be judged by its own voice is kept, unless
+   * the pieces of its sound as the gate judged them are mostly clearly not ours (see
+   * `piecesAgainst`).
    */
   private async judgeParts(speakerId: SoloSpeaker, words: readonly SttWord[], clock: StreamClock, vouched: boolean): Promise<Part[] | undefined> {
     const voices = this.voices;
@@ -943,7 +945,7 @@ export class SoloConversation {
     const clear = parts.filter((part) => part.print && voices.recognizes(part.print, speakerId));
     if (clear.length === 0) return undefined;
     for (const part of parts) {
-      part.kept = clear.includes(part) || !part.print || clear.some((ours) => voices.sameVoice(part.print!, ours.print!));
+      part.kept = clear.includes(part) || (part.print ? clear.some((ours) => voices.sameVoice(part.print!, ours.print!)) : this.piecesAgainst(speakerId, part.words, clock) <= 0);
     }
     const apart: Part[] = [];
     const broken = new Set<Part>();
@@ -974,6 +976,29 @@ export class SoloConversation {
   }
 
   /**
+   * How many more pieces of sound the gate judged on the way to the recognizer (see
+   * `judgeSound`) over those words are clearly not in that side's voice as settled here (see
+   * `VoiceFilter.unlike`) than are not: the pieces over the middle of a single word, else
+   * the pieces over each run of the words. Nothing while no such pieces exist.
+   */
+  private piecesAgainst(speakerId: SoloSpeaker, words: readonly SttWord[], clock: StreamClock): number {
+    const voices = this.voices!;
+    const unlike = (print: Float32Array) => voices.unlike(speakerId, print) && !voices.recognizes(print, speakerId);
+    const spans: [number, number][] =
+      words.length === 1
+        ? [[(clock.toConversation(words[0]!.start) + clock.toConversation(words[0]!.end, true)) / 2, NaN]]
+        : stretchesOf(words).map((stretch) => [clock.toConversation(stretch.start), clock.toConversation(stretch.end, true)]);
+    let count = 0;
+    for (const [from, to] of spans) {
+      for (const piece of this.gatePieces) {
+        const over = from < to ? piece.start < to && piece.end > from : piece.start <= from && from < piece.end;
+        if (over) count += unlike(piece.print) ? 1 : -1;
+      }
+    }
+    return count;
+  }
+
+  /**
    * Whose words a line's are, by the voice of each piece of its sound as the gate judged
    * them on the way to the recognizer (see `judgeSound`), when the recognizer heard one
    * talker in it: someone else's words said over ours land in our line then, as one
@@ -988,19 +1013,8 @@ export class SoloConversation {
     const voices = this.voices;
     if (!voices || !this.audio || !voices.checks(speakerId) || this.gatePieces.length === 0) return undefined;
     const unlike = (print: Float32Array) => voices.unlike(speakerId, print) && !voices.recognizes(print, speakerId);
-    /** How many more of the gate's pieces over a span of the conversation, or at an instant, are in a voice unlike ours than not. */
-    const against = (from: number, to = from) => {
-      let count = 0;
-      for (const piece of this.gatePieces) {
-        const over = from < to ? piece.start < to && piece.end > from : piece.start <= from && from < piece.end;
-        if (over) count += unlike(piece.print) ? 1 : -1;
-      }
-      return count;
-    };
     const taken = new Set<SttWord>();
-    for (const word of words) {
-      if (against((clock.toConversation(word.start) + clock.toConversation(word.end, true)) / 2) > 0) taken.add(word);
-    }
+    for (const word of words) if (this.piecesAgainst(speakerId, [word], clock) > 0) taken.add(word);
     if (taken.size === 0) return undefined;
     const cut = (a: SttWord, b: SttWord) => taken.has(a) !== taken.has(b);
     const apart: Part[] = [];
@@ -1013,7 +1027,7 @@ export class SoloConversation {
         print = await voices.printOf(samples);
         if (this.closed) return undefined;
       }
-      const theirs = print ? unlike(print) : against(clock.toConversation(stretch.start), clock.toConversation(stretch.end, true)) > 0;
+      const theirs = print ? unlike(print) : this.piecesAgainst(speakerId, stretch.words, clock) > 0;
       if (!theirs) {
         for (const word of stretch.words) taken.delete(word);
         continue;

@@ -27,6 +27,8 @@ export interface LearnedPrints {
   sum: Float32Array;
   /** How many prints that is, up to REMEMBERED_PRINTS. */
   count: number;
+  /** How many seconds of speech those prints are from, when known. */
+  seconds?: number;
 }
 
 /**
@@ -60,8 +62,13 @@ const ALIKE = 0.2;
  * one line only, the user's own scored as low as 0.25.
  */
 const UNLIKE = 0.3;
-/** A voice heard here is settled, and told from others by UNLIKE, once learned from this many prints. */
+/**
+ * A voice heard here is settled, and told from others by UNLIKE, once learned from this many
+ * prints, or from two prints of at least SETTLED_SECONDS of speech in all: a print of long
+ * speech is a truer likeness than one of short speech.
+ */
 const SETTLED_PRINTS = 3;
+const SETTLED_SECONDS = 8;
 /** A learned voice follows the last few things said in it, as the voice and the place vary. */
 const REMEMBERED_PRINTS = 10;
 /**
@@ -208,8 +215,13 @@ export class VoiceFilter {
    * phones; for them by their voice as learned too, which is of speech heard here as well.
    */
   unlike(side: string, print: Float32Array): boolean {
-    if (side === SOLO_THEM) return this.partnerHere.settled && this.likePartner(print) < UNLIKE;
-    return this.mineHere.settled && this.mineHere.likeness(print) < UNLIKE;
+    const here = side === SOLO_THEM ? this.partnerHere : this.mineHere;
+    return here.settled && this.likenessHere(side, print) < UNLIKE;
+  }
+
+  /** How alike a voice is to that side's as it sounds here, which `unlike` goes by; -1 while that is unknown. */
+  likenessHere(side: string, print: Float32Array): number {
+    return side === SOLO_THEM ? this.likePartner(print) : this.mineHere.likeness(print);
   }
 
   /**
@@ -270,11 +282,11 @@ export class VoiceFilter {
   learn(side: string, print: Float32Array, seconds: number): void {
     if (seconds < MIN_LEARN_SECONDS) return;
     if (side !== SOLO_THEM) {
-      if (similarity(print, this.mine) >= ALIKE) this.mineHere.add(print);
+      if (similarity(print, this.mine) >= ALIKE) this.mineHere.add(print, seconds);
       return;
     }
     const theirs = this.theirs?.print;
-    if (theirs && similarity(print, theirs) >= ALIKE && this.likeMine(print) < ALIKE) this.partnerHere.add(print);
+    if (theirs && similarity(print, theirs) >= ALIKE && this.likeMine(print) < ALIKE) this.partnerHere.add(print, seconds);
   }
 
   /**
@@ -294,7 +306,7 @@ export class VoiceFilter {
       this.theirs = { print: normalized(print), known: 'learned' };
       this.partnerHere.forget();
     } else if (vouched && side !== SOLO_THEM) {
-      if (seconds >= MIN_LEARN_SECONDS && this.likePartner(print) < SAME_VOICE) this.mineHere.add(print);
+      if (seconds >= MIN_LEARN_SECONDS && this.likePartner(print) < SAME_VOICE) this.mineHere.add(print, seconds);
     } else if (this.checks(side)) {
       this.learn(side, print, seconds);
     } else {
@@ -419,6 +431,8 @@ class LearnedVoice {
   /** The sum of the prints, when any. */
   private sum: Float32Array | undefined;
   private count = 0;
+  /** Seconds of speech the prints are from, each counting at most MAX_PRINT_SECONDS. */
+  private seconds = 0;
   /** The voice print of the voice as learned so far; undefined while it is unknown. */
   print: Float32Array | undefined;
 
@@ -429,10 +443,12 @@ class LearnedVoice {
 
   /** Whether it is learned from enough to be a fair likeness of the voice (see SETTLED_PRINTS). */
   get settled(): boolean {
-    return this.count >= SETTLED_PRINTS;
+    return this.count >= SETTLED_PRINTS || (this.count >= 2 && this.seconds >= SETTLED_SECONDS);
   }
 
-  add(print: Float32Array): void {
+  /** Learns from a print of that many seconds of speech. */
+  add(print: Float32Array, seconds: number): void {
+    this.seconds += Math.min(seconds, MAX_PRINT_SECONDS);
     if (!this.sum) {
       this.sum = new Float32Array(print);
       this.count = 1;
@@ -447,7 +463,7 @@ class LearnedVoice {
 
   /** What it was learned from, as a copy; undefined while it is unknown. */
   saved(): LearnedPrints | undefined {
-    return this.sum && { sum: new Float32Array(this.sum), count: this.count };
+    return this.sum && { sum: new Float32Array(this.sum), count: this.count, seconds: this.seconds };
   }
 
   /** Takes up a voice as learned before, e.g. in an earlier conversation. */
@@ -455,12 +471,14 @@ class LearnedVoice {
     const count = Number.isFinite(learned.count) ? Math.round(learned.count) : 1;
     this.sum = new Float32Array(learned.sum);
     this.count = Math.max(1, Math.min(count, REMEMBERED_PRINTS));
+    this.seconds = Number.isFinite(learned.seconds) && learned.seconds! > 0 ? learned.seconds! : 0;
     this.print = normalized(this.sum);
   }
 
   forget(): void {
     this.sum = undefined;
     this.count = 0;
+    this.seconds = 0;
     this.print = undefined;
   }
 }

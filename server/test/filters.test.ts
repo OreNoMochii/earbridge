@@ -1680,6 +1680,32 @@ describe('one phone in a noisy place', () => {
     assert.deepEqual(of('utterance').map((m) => m.text).slice(-1), ['Five']);
   });
 
+  it('settles my voice here from two lines long enough, as from three', async () => {
+    const { solo, stt, of, words } = soloSetup({ voices: printer });
+    solo.setTalkMode('hold');
+    solo.sendAudio(sound(9, 7000)); // me, as heard here, at length
+    solo.sendAudio(sound(2, 10000)); // someone else, somewhat like my recording and nothing like my voice here
+    stt.last.say('One', ['en'], { start: 0, end: 9 });
+    stt.last.say('Two', ['en'], { start: 9, end: 11 });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => m.text),
+      ['One', 'Two'],
+      'passes while my voice here is known from one line only, however long',
+    );
+    solo.sendAudio(sound(2, 7000));
+    solo.sendAudio(sound(2, 10000));
+    stt.last.say('Three', ['en'], { start: 11, end: 13 });
+    stt.last.say('Four', ['en'], { start: 13, end: 15 });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text), ['One', 'Two', 'Three']);
+    assert.deepEqual(
+      of('skipped').map((m) => [words(m), m.reason]),
+      [['Four', 'voice']],
+      'my voice here is settled from two lines of 8 seconds in all, and this is nothing like it',
+    );
+  });
+
   it('takes held speech for mine when it is only somewhat like my voice, and says once when it is nothing like it', async () => {
     const entries: TalkReportEntry[] = [];
     const { solo, stt, of, words } = soloSetup({ voices: printer, report: (entry) => entries.push(entry) });
@@ -1966,6 +1992,78 @@ describe('one phone with a recognizer paid by the second', () => {
     );
     const line = entries.find((e) => e.type === 'line' && e.id === 'u4');
     assert.equal(line && line.type === 'line' && line.kept, 'Hello there friend. Where is it?');
+  });
+
+  it('judges a part too short for a voice print by the pieces the gate judged over it', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, of } = soloSetup({ voices: gatePrinter, metered: true, report: (entry) => entries.push(entry) });
+    solo.setTalkMode('hold');
+    solo.setSpeaker('me');
+    const word = (text: string, start: number, speaker: string, end = start + 0.4) => ({ text, start, end, speaker });
+    // Three lines in my voice as heard here settle it.
+    await hearIn(solo, 2, 7000);
+    for (let i = 1; i <= 3; i++) {
+      await hearIn(solo, 2, 7000);
+      stt.last.say('Yes.', ['en'], { start: i * 2, end: i * 2 + 2 });
+      await settle();
+    }
+    assert.deepEqual(of('utterance').map((m) => m.text), ['Yes.', 'Yes.', 'Yes.']);
+
+    // Someone else's last word gets a label of its own, too short to print: the pieces over it are in their voice.
+    await hearIn(solo, 2, 7000); // 8–10 s: me
+    await hearIn(solo, 2, 10000); // 10–12 s: someone else
+    await hearIn(solo, 2, 7000); // 12–14 s: me
+    stt.last.say('Hello there friend. Hey you listen. Now. Where is it?', Array(10).fill('en'), {
+      start: 8.2,
+      end: 13.9,
+      words: [
+        word('Hello', 8.2, '0'),
+        word('there', 8.7, '0'),
+        word('friend.', 9.2, '0', 9.8),
+        word('Hey', 10.1, '1'),
+        word('you', 10.6, '1'),
+        word('listen.', 11.0, '1', 11.4),
+        word('Now.', 11.5, '2', 11.8),
+        word('Where', 12.3, '0'),
+        word('is', 12.8, '0'),
+        word('it?', 13.3, '0', 13.9),
+      ],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(3), ['Hello there friend. Where is it?']);
+    assert.deepEqual(
+      of('skipped').map((m) => [m.id, m.reason]),
+      [
+        ['u5', 'voice'],
+        ['u6', 'voice'],
+      ],
+    );
+
+    // A short word of mine with a label of its own, among my words: the pieces over it are in my voice.
+    await hearIn(solo, 2, 7000); // 14–16 s: me
+    await hearIn(solo, 2, 7000); // 16–18 s: me
+    stt.last.say('So. Where is it?', Array(4).fill('en'), {
+      start: 14.2,
+      end: 16.8,
+      words: [word('So.', 14.2, '2', 14.5), word('Where', 15.0, '0'), word('is', 15.6, '0'), word('it?', 16.2, '0', 16.8)],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(4), ['So. Where is it?']);
+    assert.equal(of('skipped').length, 2);
+    assert.deepEqual(
+      entries.filter((e) => e.type === 'parts').map((e) => e.type === 'parts' && e.parts.map((part) => [part.text, part.kept, part.id])),
+      [
+        [
+          ['Hello there friend. Where is it?', true, undefined],
+          ['Hey you listen.', false, 'u5'],
+          ['Now.', false, 'u6'],
+        ],
+        [
+          ['So.', true, undefined],
+          ['Where is it?', true, undefined],
+        ],
+      ],
+    );
   });
 
   it('sends on what was heard but not judged yet when a turn ends, so that no short line is lost', async () => {
