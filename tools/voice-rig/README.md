@@ -36,3 +36,16 @@ talker's, how many would have been translated under the whole-line rule alone, a
 talk report and the messages to `clips/<clip>.wav.run.jsonl`.
 
 Nothing generated is committed (see `.gitignore`), and the key is read from `.env` only.
+
+## Reading real talks
+
+Test builds of the app (made with `EXPO_PUBLIC_TALK_REPORT=1`) keep a report of each talk on
+the phone, one JSON line per event in the same shape as the rig's `clips/<clip>.wav.run.jsonl`
+(see `shared/pipeline/report.ts`). `./pull_reports.sh <folder outside the repo>` pulls them all
+over adb and reads each with `python3 -I report.py <report.jsonl>`, which prints every line
+heard with its loudness, its likeness to my recording and to my voice here, the recognizer's
+talker labels on its words and the parts left out, then the gate's windows by verdict, and a
+summary comparing my held lines with the other voices heard: in loudness, in likeness and in
+labels (`--full` for whole texts, `--gate` for every gate window). The reports and the printed
+output hold the words of everyone heard, so they stay out of the repo. The reader works on the
+rig's runs too.
