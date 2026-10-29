@@ -2367,6 +2367,58 @@ describe('one phone with a recognizer paid by the second', () => {
     assert.deepEqual([Number(theirs.mineHere.toFixed(2)), theirs.unlikeMineBelow, Number(theirs.doubtMineBelow?.toFixed(3))], [0.58, 0.4, 0.75]);
   });
 
+  it('leaves out whole a run of someone else\'s words whose middle pieces are only in doubt, as such pieces keep no word', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, of } = soloSetup({ voices: blendPrinter, metered: true, report: (entry) => entries.push(entry) });
+    solo.setTalkMode('hold');
+    solo.setSpeaker('me');
+    const word = (text: string, start: number, end: number) => ({ text, start, end, speaker: '0' });
+    // Three lines in my voice as heard here settle it, each as alike it as can be.
+    await hearIn(solo, 2, 7000);
+    for (let i = 1; i <= 3; i++) {
+      await hearIn(solo, 2, 7000);
+      stt.last.say('Yes.', ['en'], { start: i * 2, end: i * 2 + 2 });
+      await settle();
+    }
+    assert.deepEqual(of('utterance').map((m) => m.text), ['Yes.', 'Yes.', 'Yes.']);
+
+    // Someone else talks for a while between bursts of a crowd's noise, in a voice clearly like mine here by
+    // that measure alone: the pieces over the edges of their words take in the noise and are unlike my voice,
+    // while those over the middle of them are only in doubt, each of my lines having been far more alike it.
+    // Were a piece in doubt for the words over it, the middle words would stay, and the edge runs would be
+    // too short to tell a stranger's by and given back.
+    await hearIn(solo, 1, 7000); // 8–9 s: me
+    await hearIn(solo, 1, 6000); // 9–10 s: the crowd
+    await hearIn(solo, 2, 20000); // 10–12 s: someone else
+    await hearIn(solo, 1, 6000); // 12–13 s: the crowd
+    await hearIn(solo, 2, 7000); // 13–15 s: me
+    stt.last.say("Hello there. I think it's about ten minutes. Thanks.", Array(9).fill('en'), {
+      start: 8.1,
+      end: 13.7,
+      words: [
+        word('Hello', 8.1, 8.4),
+        word('there.', 8.5, 8.9),
+        word('I', 10, 10.2),
+        word('think', 10.25, 10.55),
+        word("it's", 10.6, 10.9),
+        word('about', 10.95, 11.2),
+        word('ten', 11.25, 11.5),
+        word('minutes.', 11.55, 11.95),
+        word('Thanks.', 13.2, 13.7),
+      ],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(3), ['Hello there. Thanks.']);
+    assert.deepEqual(of('skipped').map((m) => [m.id, m.reason]), [['u5', 'voice']]);
+    const parts = entries.filter((e) => e.type === 'parts').map((e) => e.type === 'parts' && e.parts);
+    assert.deepEqual(parts.map((p) => p && p.map((part) => [part.text, part.kept, part.id])), [
+      [
+        ['Hello there. Thanks.', true, undefined],
+        ["I think it's about ten minutes.", false, 'u5'],
+      ],
+    ]);
+  });
+
   it('gives back a few words of mine taken for someone else by the pieces over them when their own sound is clearly my voice', async () => {
     const entries: TalkReportEntry[] = [];
     const { solo, stt, of } = soloSetup({ voices: blendPrinter, metered: true, report: (entry) => entries.push(entry) });

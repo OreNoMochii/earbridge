@@ -987,12 +987,15 @@ export class SoloConversation {
   /**
    * How many more pieces of sound the gate judged on the way to the recognizer (see
    * `judgeSound`) over those words are clearly not in that side's voice as settled here (see
-   * `VoiceFilter.unlike`) than are not: the pieces over the middle of a single word, else
-   * the pieces over each run of the words. Nothing while no such pieces exist.
+   * `VoiceFilter.unlike`) than are in it; a piece only in doubt (see `VoiceFilter.doubtful`)
+   * counts for neither, as its sound alone cannot clear a word any more than a run. The pieces
+   * over the middle of a single word, else the pieces over each run of the words. Nothing
+   * while no such pieces exist.
    */
   private piecesAgainst(speakerId: SoloSpeaker, words: readonly SttWord[], clock: StreamClock): number {
     const voices = this.voices!;
-    const unlike = (print: Float32Array) => voices.unlike(speakerId, print) && !voices.recognizes(print, speakerId);
+    const vote = (print: Float32Array) =>
+      voices.unlike(speakerId, print) && !voices.recognizes(print, speakerId) ? 1 : voices.doubtful(speakerId, print) ? 0 : -1;
     const spans: [number, number][] =
       words.length === 1
         ? [[(clock.toConversation(words[0]!.start) + clock.toConversation(words[0]!.end, true)) / 2, NaN]]
@@ -1001,7 +1004,7 @@ export class SoloConversation {
     for (const [from, to] of spans) {
       for (const piece of this.gatePieces) {
         const over = from < to ? piece.start < to && piece.end > from : piece.start <= from && from < piece.end;
-        if (over) count += unlike(piece.print) ? 1 : -1;
+        if (over) count += vote(piece.print);
       }
     }
     return count;
