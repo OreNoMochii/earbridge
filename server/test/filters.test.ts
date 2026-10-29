@@ -177,6 +177,7 @@ const VOICES: Record<number, number[]> = {
   20000: [0.3, 0.75, 0.589],
   21000: [0.45, 0.7, 0.5545],
   22000: [0.7, 0.1, 0.7071],
+  23000: [0.5, 0.55, 0.669],
 };
 const printer = {
   mine: new Float32Array(VOICES[1000]!),
@@ -456,6 +457,42 @@ describe('voices', () => {
     const unknown = new VoiceFilter(printer);
     assert.equal(unknown.admits('them', print(2000), 2, true), true);
     assert.equal(unknown.partner, 'unknown');
+  });
+
+  it('takes speech for me in a voice clearly more like theirs than mine for theirs, however like mine it is', () => {
+    // A voice somewhat like mine (0.45, over the bar) but more like theirs (0.7).
+    assert.equal(new VoiceFilter(printer).admits('me', print(21000), 2), true, 'mine while theirs is not known');
+    const voices = new VoiceFilter(printer);
+    voices.setPartner(print(2000));
+    assert.equal(voices.admits('me', print(21000), 2, true), false, 'rather theirs, vouched for or not');
+    assert.equal(voices.admits('me', print(21000), 2), false);
+    assert.equal(voices.printHere('me'), undefined, 'nothing learned from it');
+    voices.translated('me', print(21000), 2, true);
+    assert.equal(voices.printHere('me'), undefined, 'nor when translated after all');
+    assert.equal(voices.recognizes(print(21000), 'me'), false);
+    assert.equal(voices.recognizes(print(21000), 'them'), true, 'speech for them may be in my voice');
+    assert.equal(voices.recognizes(print(21000)), true);
+    assert.equal(voices.unlike('me', print(21000)), true, 'before my voice here is settled');
+    assert.equal(voices.unlike('them', print(21000)), false);
+    assert.equal(voices.admits('them', print(21000), 2, true), true);
+    // The gate: not mine when only mine is wanted, ours when theirs is wanted too.
+    assert.equal(voices.admits('me', print(1000), 2), true);
+    assert.equal(voices.judge(['me'], print(21000)), 'other');
+    assert.equal(voices.judge(['me', 'them'], print(21000)), 'ours');
+    assert.equal(voices.judge(['me'], print(1000)), 'ours');
+    // Within the margin, a voice like both is mine still.
+    const close = new VoiceFilter(printer);
+    close.setPartner(print(2000));
+    assert.equal(close.admits('me', print(23000), 2), true, '0.5 like mine, 0.55 like theirs');
+    assert.equal(close.judge(['me'], print(23000)), 'ours');
+    // Their voice as learned from what they said for themselves, holding the button.
+    const learned = new VoiceFilter(printer);
+    for (let i = 0; i < 3; i++) assert.equal(learned.admits('them', print(2000), 2, true), true);
+    assert.equal(learned.partner, 'learned');
+    assert.equal(learned.admits('me', print(21000), 2, true), false);
+    assert.equal(learned.judge(['me'], print(21000)), 'maybe', 'while my voice here is not known');
+    assert.equal(learned.admits('me', print(1000), 2), true);
+    assert.equal(learned.judge(['me'], print(21000)), 'other');
   });
 
   it('learns my voice here from what was said holding the button and translated after all, however unlike my recording', () => {
@@ -1135,6 +1172,37 @@ describe('one phone in a noisy place', () => {
       [
         ['u1', 'Hello there. Where is it?'],
         ['u2', 'Hey you.'],
+      ],
+    );
+  });
+
+  it('leaves out of a held line a part in a voice more like theirs than mine, however like mine it is', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, of } = soloSetup({ voices: printer, report: (entry) => entries.push(entry) });
+    solo.usePartner(print(2000));
+    solo.setTalkMode('hold');
+    solo.sendAudio(sound(2, 1000)); // me
+    solo.sendAudio(sound(2, 21000)); // them, over me: somewhat like my voice, more like theirs
+    solo.sendAudio(sound(2, 1000)); // me again
+    const word = (text: string, start: number, speaker: string) => ({ text, start, end: start + 0.5, speaker });
+    const said = [word('Hello', 0.2, '0'), word('there.', 1.2, '0'), word('Hey', 2.2, '1'), word('you.', 3.2, '1'), word('Where', 4.2, '0'), word('is', 4.7, '0'), word('it?', 5.2, '0')];
+    stt.last.say('Hello there. Hey you. Where is it?', ['en', 'en', 'en', 'en', 'en', 'en', 'en'], { start: 0.2, end: 5.7, words: said });
+    await settle();
+    assert.deepEqual(
+      of('utterance').map((m) => [m.id, m.speakerId, m.text]),
+      [['u1', 'me', 'Hello there. Where is it?']],
+    );
+    assert.deepEqual(of('skipped'), [{ type: 'skipped', id: 'u2', speakerId: 'me', lang: 'en-US', reason: 'voice' }]);
+    const r = (x?: number) => (x === undefined ? undefined : Math.round(x * 100) / 100);
+    assert.deepEqual(
+      entries
+        .filter((e) => e.type === 'parts')
+        .map((e) => e.type === 'parts' && e.parts.map((part) => [part.speaker, part.text, part.kept, r(part.voice?.mine), r(part.voice?.partner)])),
+      [
+        [
+          ['0', 'Hello there. Where is it?', true, 1, 0],
+          ['1', 'Hey you.', false, 0.45, 0.7],
+        ],
       ],
     );
   });

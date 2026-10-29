@@ -953,8 +953,10 @@ export class SoloConversation {
     }
     const clear = parts.filter((part) => part.print && voices.recognizes(part.print, speakerId));
     if (clear.length === 0) return undefined;
+    // In the same voice as a clear part (another one than `own`), unless rather the other person's (see `VoiceFilter.ratherTheirs`).
+    const alike = (print: Float32Array, own?: (typeof parts)[number]) => !voices.ratherTheirs(speakerId, print) && clear.some((ours) => ours !== own && voices.sameVoice(print, ours.print!));
     for (const part of parts) {
-      part.kept = clear.includes(part) || (part.print ? clear.some((ours) => voices.sameVoice(part.print!, ours.print!)) : this.piecesAgainst(speakerId, part.words, clock) <= 0);
+      part.kept = clear.includes(part) || (part.print ? alike(part.print) : this.piecesAgainst(speakerId, part.words, clock) <= 0);
     }
     const apart: Part[] = [];
     const broken = new Set<Part>();
@@ -967,7 +969,7 @@ export class SoloConversation {
       const print = await voices.printOf(samples);
       if (this.closed) return undefined;
       if (!print) continue;
-      const ours = voices.recognizes(print, speakerId) || clear.some((other) => other !== part && voices.sameVoice(print, other.print!));
+      const ours = voices.recognizes(print, speakerId) || alike(print, part);
       const kept = part.kept ? ours || !voices.unlike(speakerId, print) : ours;
       if (kept === part.kept) continue;
       part.words = part.words.filter((word) => !stretch.words.includes(word));

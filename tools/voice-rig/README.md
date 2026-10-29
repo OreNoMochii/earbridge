@@ -51,14 +51,21 @@ human voices, the 40 readers (20 men, 20 women) of LibriSpeech's `dev-clean` set
 of a set at one loudness (RMS 2000) and chatter made of six more readers' sentences:
 
 ```sh
-venv/bin/python -I clips/make_real_clips.py <LibriSpeech/dev-clean folder> --me 251 --other 5694 --late [--earphone]
+venv/bin/python -I clips/make_real_clips.py <LibriSpeech/dev-clean folder> --me 251 --other 5694 --late [--turns] [--earphone]
 node run.mts clips/real-late-251-5694-clean.wav
 ```
 
 That writes `clips/real-late-251-5694-{clean,snr10,snr5,snr0}.wav`, the truth, and `real-late-251-5694-recording.wav`,
 "my" recording made of three other sentences of reader 251 (20 s), which `run.mts` uses in place of the
-stand-in for any clip set that has one. `--late` and `--earphone` mean what they do for `make_clips.py`;
-the earphone channel itself is `clips/channel.py`, shared by both makers. Readers are chosen by number:
+stand-in for any clip set that has one. `--late` and `--earphone` mean what they do for `make_clips.py`; `--turns`
+(`real-late-turns-251-5694-*`) puts three lines of the other reader's first, said holding the "Them" button (the
+truth marks them `held`, and `run.mts` holds that button over them, from half a second before to half a second
+after), so that their voice is learned from what they say for themselves before they talk over my lines, as in a
+real talk; the summary line then also counts their held words kept (`held for them: 29/32 theirs`). `--turns`
+also writes their recording, `real-late-turns-251-5694-partner.wav` (three other sentences of theirs, 20 s),
+which `run.mts` gives the talk as the other person's voice recorded in an earlier talk, unless `RIG_PARTNER=none`
+makes it learn their voice from their held lines instead; the earphone channel itself is `clips/channel.py`,
+shared by both makers. Readers are chosen by number:
 each reader's own lines are 0.61-0.93 like their recording, and the nearest other reader of the same
 gender gets 0.41-0.45 (men) or up to 0.52 (women) like it, so a man's "1 in 100" stranger over the `same` bar
 is a certainty among twenty: 251 vs 5694 (an even voice, 0.85 like its own recording at the least, against
@@ -96,6 +103,23 @@ whole-line rule for held "Me" lines with any bars, without the recognizer, and c
 talker's let through, in all and by kind of clip (plain or earphone channel, clean or in chatter), then over a grid
 of bars (`--solo`: lines nobody talks over only, as the app judges the rest by their parts); `speed.py` times a
 model's print of 1.5 s and 10 s of speech on this Mac, one thread.
+
+### The other person's voice over my button (2026-10-30)
+
+With their voice known, speech for me that is clearly theirs (0.4 like their voice, the `same` bar) and 0.1 more
+like theirs than like mine is theirs, however like mine it is (`VoiceFilter.ratherTheirs`): at the gate (their
+windows close it), on whole held lines and on parts of split lines. Five `--turns` sets, their voice recorded
+(`clips/<set>partner.wav`), before → after with the split, single runs (Deepgram itself varies by a few words
+between runs): mine 865 → 859 of 1263 words, theirs leaked under my button 176 → 116 of 507. On the clean
+microphone, 251-5694 leaked 12/24/25 → 1/1/5 of 30 (clean, 10 dB, 5 dB) with mine 81/79/61 → 81/79/62 of 78,
+and 5536-777 leaked 6/0/0 → 0/0/0 of 40 with mine 91/94/76 → 89/93/70 of 95; the loss at 5 dB was one 1.7 s
+part of mine 0.42 like me and 0.54 like theirs taken for theirs, and Deepgram mishearing the start of my next
+line after the gate had closed over theirs. The three earphone-channel sets did not change at all: through that
+channel their lines are 0.26-0.50 like their recording, mostly under the bar, so the rule never fires, as it
+would not for the user's own lines through earphones (0.04-0.25 like the recording). With their voice learned
+from three held lines instead (`RIG_PARTNER=none`), it was learned on 5536-777 only (on the other sets their
+held lines are 0.4 like mine and so are taken as mine translating for them): there leaked 6/6/0 → 0/1/0 and
+mine 90/95/75 → 91/93/77.
 
 ### Other speaker models (2026-10-30)
 

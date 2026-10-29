@@ -1,7 +1,9 @@
 // Streams a 16 kHz clip through the app's real pipeline — SoloConversation with the real
 // Deepgram recognizer (diarization on, gate on, as with the user's own keys) and real CAM++
-// voice prints — holding the button for "Me" throughout, and scores what was translated
-// against the clip's truth. Usage: node run.mts clips/clean.wav (see README.md)
+// voice prints — holding the button for "Me" throughout, but for "Them" over the lines the
+// clip's truth says were said holding that button, their voice recorded in an earlier talk
+// when the clip set has their recording — and scores what was translated against the truth.
+// Usage: node run.mts clips/clean.wav (see README.md)
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { SoloConversation } from '../../shared/pipeline/solo.ts';
@@ -76,13 +78,26 @@ function print(samples: Int16Array): Promise<Float32Array | undefined> {
 const recordingFile = `${HERE}clips/${clip.replace(/.*\//, '').replace(/(clean|snr\d+)\.wav$/, 'recording.wav')}`;
 const mine = await print(pcmOf(existsSync(recordingFile) ? recordingFile : `${HERE}recording.wav`));
 if (!mine) throw new Error('no print of the recording');
+// Their voice: as recorded in an earlier talk, from the clip set's own recording of it (clips/<set>partner.wav)
+// when there is one, unless RIG_PARTNER=none; else learned from what they say for themselves, if at all.
+const partnerFile = recordingFile.replace(/recording\.wav$/, 'partner.wav');
+const theirs = process.env.RIG_PARTNER !== 'none' && existsSync(partnerFile) ? await print(pcmOf(partnerFile)) : undefined;
+if (process.env.RIG_PARTNER !== 'none' && existsSync(partnerFile) && !theirs) throw new Error('no print of their recording');
+
+const truthFile = clip.replace(/.*\//, '').replace(/(clean|snr\d+)\.wav$/, 'truth.json');
+if (truthFile === clip.replace(/.*\//, '')) throw new Error(`no truth file is known for ${clip}`);
+const truth = JSON.parse(readFileSync(`${HERE}clips/${truthFile}`, 'utf8')).lines as Array<{ speaker: string; start: number; end: number; text: string; held?: string }>;
+// Who holds the button: "Them" over the lines said holding it, from a little before to a little after, as a person would; else "Me".
+const HOLD_MARGIN = 0.5;
+const heldForThem = truth.filter((line) => line.held === 'them');
+const holder = (at: number): 'me' | 'them' => (heldForThem.some((line) => at >= line.start - HOLD_MARGIN && at <= line.end + HOLD_MARGIN) ? 'them' : 'me');
 
 const messages: any[] = [];
 const entries: any[] = [];
 let ids = 0;
 const solo = new SoloConversation({
   myLang: 'en-US',
-  theirLang: 'ja',
+  theirLang: 'en-US', // the other talker reads English too: the stream for "Them" is opened in their language
   voiceLangs: [],
   stt: new DeepgramProvider({ apiKey, model: 'nova-3', fallbackModel: 'nova-2', openSocket: openDeepgramSocket, keyHint: 'key' }),
   translator: new FakeTranslator(),
@@ -99,8 +114,11 @@ const solo = new SoloConversation({
   report: (entry) => entries.push(entry),
 });
 solo.start();
+if (theirs && !solo.usePartner(theirs)) throw new Error('their recording could not be used');
+console.log(`their voice: ${theirs ? 'recorded' : 'to be learned from what they say for themselves'}`);
 solo.setTalkMode('hold');
-solo.setSpeaker('me');
+let holding: 'me' | 'them' = 'me';
+solo.setSpeaker(holding);
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const samples = pcmOf(clip);
@@ -109,6 +127,11 @@ const CHUNK = 3200; // 100 ms
 const started = Date.now();
 let sent = 0;
 for (let at = 0; at < bytes.length; at += CHUNK) {
+  const side = holder(at / 2 / 16000);
+  if (side !== holding) {
+    holding = side;
+    solo.setSpeaker(side);
+  }
   solo.sendAudio(bytes.slice(at, at + CHUNK));
   sent++;
   const due = started + sent * 100;
@@ -129,9 +152,6 @@ const out = `${clip}.run.jsonl`;
 writeFileSync(out, [...entries.map((e) => JSON.stringify({ kind: 'report', ...e })), ...messages.map((m) => JSON.stringify({ kind: 'message', ...m }))].join('\n') + '\n');
 
 // ---- Scoring against the truth.
-const truthFile = clip.replace(/.*\//, '').replace(/(clean|snr\d+)\.wav$/, 'truth.json');
-if (truthFile === clip.replace(/.*\//, '')) throw new Error(`no truth file is known for ${clip}`);
-const truth = JSON.parse(readFileSync(`${HERE}clips/${truthFile}`, 'utf8')).lines as Array<{ speaker: string; start: number; end: number; text: string }>;
 const who = (s: number, e: number) => {
   let best: string | undefined;
   let cover = 0;
@@ -142,18 +162,34 @@ const who = (s: number, e: number) => {
   return best;
 };
 const r = (x: number | undefined) => (x === undefined ? '-' : x.toFixed(2));
+// Words said under my button, by talker; and the other talker's said holding "Them", kept as theirs or let through as mine.
 const totals = { me: 0, other: 0 };
-for (const line of truth) totals[line.speaker as 'me' | 'other'] += line.text.split(/\s+/).length;
+const held = { total: 0, kept: 0, mine: 0 };
+for (const line of truth) {
+  if (line.held === 'them') held.total += line.text.split(/\s+/).length;
+  else totals[line.speaker as 'me' | 'other'] += line.text.split(/\s+/).length;
+}
 const before = { me: 0, other: 0 };
 const after = { me: 0, other: 0 };
 const partsOf = new Map(entries.filter((e) => e.type === 'parts').map((e) => [e.id, e.parts]));
 console.log(`\n=== ${clip}`);
 for (const line of entries.filter((e) => e.type === 'line')) {
   const v = line.voice ?? {};
-  console.log(`[${line.at.toFixed(1)}s] ${line.outcome}${line.reason ? ` (${line.reason})` : ''} mine=${r(v.mine)} here=${r(v.mineHere)}${v.unlikeMineBelow !== undefined ? ` bar=${r(v.unlikeMineBelow)}` : ''}${v.doubtMineBelow !== undefined ? ` doubt=${r(v.doubtMineBelow)}` : ''} ${line.seconds?.toFixed(1)}s: ${JSON.stringify(line.text)}${line.kept !== undefined ? `\n        kept: ${JSON.stringify(line.kept)}` : ''}`);
+  console.log(`[${line.at.toFixed(1)}s] ${line.side === 'them' ? 'for them: ' : ''}${line.outcome}${line.reason ? ` (${line.reason})` : ''} mine=${r(v.mine)} here=${r(v.mineHere)}${(v.partner ?? -1) >= 0 || (v.partnerHere ?? -1) >= 0 ? ` theirs=${r(v.partner)} theirsHere=${r(v.partnerHere)}` : ''}${v.unlikeMineBelow !== undefined ? ` bar=${r(v.unlikeMineBelow)}` : ''}${v.doubtMineBelow !== undefined ? ` doubt=${r(v.doubtMineBelow)}` : ''} ${line.seconds?.toFixed(1)}s: ${JSON.stringify(line.text)}${line.kept !== undefined ? `\n        kept: ${JSON.stringify(line.kept)}` : ''}`);
   const parts = partsOf.get(line.id);
-  for (const part of parts ?? []) console.log(`        part ${part.speaker}${part.apart ? ' (apart)' : ''} ${part.kept ? 'kept' : 'left out'} mine=${r(part.voice?.mine)} here=${r(part.voice?.mineHere)} ${part.seconds.toFixed(1)}s: ${JSON.stringify(part.text)}`);
+  for (const part of parts ?? []) console.log(`        part ${part.speaker}${part.apart ? ' (apart)' : ''} ${part.kept ? 'kept' : 'left out'} mine=${r(part.voice?.mine)} here=${r(part.voice?.mineHere)}${(part.voice?.partner ?? -1) >= 0 ? ` theirs=${r(part.voice?.partner)}` : ''} ${part.seconds.toFixed(1)}s: ${JSON.stringify(part.text)}`);
   if (!line.words) continue;
+  if (line.side === 'them') {
+    // Said holding "Them": theirs, kept as theirs; mine let through as theirs is a slip of the button.
+    for (const word of line.words) {
+      const t = who(word.start, word.end);
+      const keptNow = line.outcome === 'translated' && (!parts || new Set((parts ?? []).filter((p: any) => p.kept).flatMap((p: any) => p.starts as number[])).has(word.start));
+      if (!keptNow) continue;
+      if (t === 'other') held.kept++;
+      else if (t === 'me') held.mine++;
+    }
+    continue;
+  }
   // As the whole line would have been judged (held for me: somewhat like my recording, or like my voice here).
   const wholeAdmitted = (v.mine ?? -1) >= 0.2 || (v.mineHere ?? -1) >= 0.4;
   const keptStarts = new Set((parts ?? []).filter((p: any) => p.kept).flatMap((p: any) => p.starts as number[]));
@@ -168,6 +204,9 @@ for (const line of entries.filter((e) => e.type === 'line')) {
 const gates = entries.filter((e) => e.type === 'gate');
 const sentEntry = entries.find((e) => e.type === 'sent');
 console.log(`gate: ${gates.length} entries, ${gates.filter((g) => g.open).length} open; sent ${sentEntry?.sent?.toFixed(1)} of ${sentEntry?.heard?.toFixed(1)} s`);
-console.log(`words translated — whole-line rule: ${before.me}/${totals.me} mine, ${before.other}/${totals.other} theirs leaked; with the split: ${after.me}/${totals.me} mine, ${after.other}/${totals.other} theirs leaked`);
+console.log(
+  `words translated — whole-line rule: ${before.me}/${totals.me} mine, ${before.other}/${totals.other} theirs leaked; with the split: ${after.me}/${totals.me} mine, ${after.other}/${totals.other} theirs leaked` +
+    (held.total > 0 ? `; held for them: ${held.kept}/${held.total} theirs${held.mine > 0 ? `, ${held.mine} mine` : ''}` : ''),
+);
 console.log(`skipped lines offered: ${messages.filter((m) => m.type === 'skipped').length}; wrote ${out}`);
 process.exit(0);

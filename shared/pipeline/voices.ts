@@ -112,6 +112,17 @@ const UNLIKE_MARGIN = 0.25;
  */
 const LEARN_MARGIN = 0.1;
 /**
+ * Speech for me in a voice clearly theirs (see `same`) and this much more like theirs than
+ * like mine is theirs, however like mine it is. A bar alone takes a voice somewhat like mine
+ * for mine, and the other person's voice, of the same gender, is that like it now and then (on
+ * the rig a man's voice like mine was as like my voice here as my own lines). Theirs is known
+ * from their recording, or learned from what they say holding their button, so this tells the
+ * two apart from early in a talk, whatever is settled of mine here. The margin is for a voice
+ * somewhat like both by chance: my own lines through earphones in a crowd have been as
+ * little as 0.43 like my voice here.
+ */
+const NEARER_MARGIN = 0.1;
+/**
  * A voice heard here is settled, and told from others by `unlike`, once learned from this many
  * prints, or from two prints of at least SETTLED_SECONDS of speech in all: a print of long
  * speech is a truer likeness than one of short speech.
@@ -239,6 +250,8 @@ export class VoiceFilter {
    * learned must not drift their way, or their voice passes for ours from then on. Once how
    * it sounds here is settled, such speech is not even that side's unless it is somewhat
    * like that too (see `unlike`): it is left for the user to ask for.
+   * Speech for me in a voice clearly more like theirs than mine is theirs, however like mine it
+   * is (see `ratherTheirs`).
    */
   admits(side: string, print: Float32Array, seconds: number, vouched = false): boolean {
     // So that each is still told when the noise around changes how it sounds; only from
@@ -248,7 +261,7 @@ export class VoiceFilter {
       if (theirs && similarity(print, theirs) >= this.bars.same) this.learn(SOLO_THEM, print, seconds);
       return true;
     }
-    if (this.isMine(print)) {
+    if (this.isMine(print) && !this.ratherTheirs(side, print)) {
       if (similarity(print, this.mine) >= this.bars.same) this.learn(SOLO_ME, print, seconds);
       return true;
     }
@@ -268,8 +281,11 @@ export class VoiceFilter {
    * still a poor likeness, so nothing is unlike it until then. For me by my voice here
    * alone, which my recording matches poorly on some phones; for them by their voice as
    * learned too, which is of speech heard here as well.
+   * For me, a voice clearly more like theirs than mine as well, whatever is settled (see
+   * `ratherTheirs`).
    */
   unlike(side: string, print: Float32Array): boolean {
+    if (this.ratherTheirs(side, print)) return true;
     const here = side === SOLO_THEM ? this.partnerHere : this.mineHere;
     return here.settled && this.likenessHere(side, print) < here.unlikeBelow;
   }
@@ -294,6 +310,18 @@ export class VoiceFilter {
   }
 
   /**
+   * Whether a voice heard for `side` is rather the other person's: for me, one clearly theirs
+   * (see `same`) and more like theirs than like mine by NEARER_MARGIN, as recorded or learned,
+   * or as heard here; never for them, whose speech may be in my voice, and never while theirs
+   * is not known.
+   */
+  ratherTheirs(side: string, print: Float32Array): boolean {
+    if (side !== SOLO_ME) return false;
+    const theirs = this.likePartner(print);
+    return theirs >= this.bars.same && theirs >= this.likeMine(print) + NEARER_MARGIN;
+  }
+
+  /**
    * Whether a voice is somewhat like `side`'s as recorded or learned, and not clearly the
    * other person's. Not as heard here: a voice learned here is itself only somewhat like the
    * recording, so someone else's voice gets that near it now and then.
@@ -312,9 +340,12 @@ export class VoiceFilter {
    * theirs until it is known, but for a voice the user said was not theirs; either until
    * it has been heard here, as a voice recorded somewhere else may sound unlike its
    * recording. Learns nothing.
+   * When only mine is wanted, a voice clearly more like theirs than mine is 'other', however like
+   * mine it is (see `ratherTheirs`).
    */
   judge(sides: readonly string[], print: Float32Array): GateVerdict {
-    if (this.isMine(print) || similarity(print, this.mine) >= this.bars.alike) return 'ours';
+    const rather = !sides.includes(SOLO_THEM) && this.ratherTheirs(SOLO_ME, print);
+    if (!rather && (this.isMine(print) || similarity(print, this.mine) >= this.bars.alike)) return 'ours';
     if (sides.includes(SOLO_THEM)) {
       const theirs = this.theirs?.print;
       if (!theirs) return this.isRejected(print) ? 'other' : 'maybe';
@@ -328,8 +359,10 @@ export class VoiceFilter {
   /**
    * Whether a voice is clearly one of the two, as far as they are known, without learning
    * anything; with a side, one that speaks for it (see `admits`).
+   * For me, never a voice clearly more like theirs than mine (see `ratherTheirs`).
    */
   recognizes(print: Float32Array, side?: string): boolean {
+    if (side === SOLO_ME && this.ratherTheirs(side, print)) return false;
     return this.isMine(print) || (side !== SOLO_ME && this.likePartner(print) >= this.bars.same);
   }
 
