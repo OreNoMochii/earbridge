@@ -3,7 +3,7 @@ import { AUDIO_SAMPLE_RATE, SKIPPED_KEPT, SOLO_ME, SOLO_THEM } from '../protocol
 import type { RecordingProblem, ServerMessage, SkipReason, SpeakerSelection, TalkMode } from '../protocol.ts';
 import { DirectionFilter } from './direction.ts';
 import type { Place, Spatial } from './direction.ts';
-import { SpeechGate } from './gate.ts';
+import { GATE_WINDOW_SECONDS, SpeechGate } from './gate.ts';
 import type { GateVerdict, GateWindow } from './gate.ts';
 import { ConversationHistory } from './history.ts';
 import { judgeLanguages } from './language-filter.ts';
@@ -1010,11 +1010,13 @@ export class SoloConversation {
   /**
    * The core of a run of words taken for someone else's by the pieces the gate judged: those
    * are as long as a piece, so where the run meets our words its end is off by a word or so,
-   * and ours there would be lost. Words are dropped from such an end, a few at most, for
-   * whichever rest long enough to tell (see MIN_LEARN_SECONDS) is clearly less like that
-   * side's voice here (see TRIM_MARGIN); the dropped words are the line's again. An end at
-   * the line's edge is left alone: words given back there would stand on their own, and a
-   * stranger's line judged whole is skipped, while its least likely words might pass.
+   * and ours there would be lost. Words are dropped from such an end (`ends` tells which meet
+   * our words), a few at most, for whichever rest long enough to tell (see MIN_LEARN_SECONDS)
+   * is clearly less like that side's voice here (see TRIM_MARGIN); the dropped words are the
+   * line's again. An end at the line's edge, or a piece's length or more from our words, is
+   * left alone: no piece over the run takes in ours there, and words given back there would
+   * stand on their own, while a stranger's line judged whole is skipped, its least likely
+   * words with it.
    */
   private async coreOf(speakerId: SoloSpeaker, run: Run, ends: { start: boolean; end: boolean }, clock: StreamClock): Promise<Run> {
     const voices = this.voices!;
@@ -1044,8 +1046,11 @@ export class SoloConversation {
    * talker's. Once our voice as settled here is known well enough to tell (see
    * `VoiceFilter.unlike`), a word most of whose pieces are clearly not in it is someone
    * else's; each such run of words is left out on its own, judged again by its own sound
-   * when there is enough of it to tell (see MIN_LEARN_SECONDS), else by the pieces over
-   * it; the rest is the line, judged as one (see `VoiceFilter.admits`). Nothing without
+   * when there is enough of it to tell (see MIN_LEARN_SECONDS), by the pieces over it as
+   * well when that sound is in doubt (see `VoiceFilter.doubtful`), else by the pieces
+   * alone, unless its sound, though short, is clearly in our voice: the pieces over a few
+   * words of ours take in a neighbour's; the rest is the line, judged as one (see
+   * `VoiceFilter.admits`). Nothing without
    * such a run, or when the rest is not ours after all: the line is then judged as a whole.
    */
   private async splitBySound(speakerId: SoloSpeaker, words: readonly SttWord[], clock: StreamClock, vouched: boolean): Promise<Part[] | undefined> {
@@ -1061,18 +1066,26 @@ export class SoloConversation {
       if (!taken.has(stretch.words[0]!)) continue;
       const samples = this.soundOf([stretch], clock);
       const seconds = samples.length / AUDIO_SAMPLE_RATE;
-      let print: Float32Array | undefined;
-      if (seconds >= MIN_LEARN_SECONDS) {
-        print = await voices.printOf(samples);
-        if (this.closed) return undefined;
-      }
-      const theirs = print ? unlike(print) : this.piecesAgainst(speakerId, stretch.words, clock) > 0;
+      const print = await voices.printOf(samples);
+      if (this.closed) return undefined;
+      const byPieces = () => this.piecesAgainst(speakerId, stretch.words, clock) > 0;
+      // Enough of its own sound tells whose it is, by the pieces too when in doubt. A shorter run's print is
+      // unsure, so the pieces decide, unless it is clearly in our voice: those over a few words of ours take
+      // in a neighbour's.
+      const told = print !== undefined && seconds >= MIN_LEARN_SECONDS;
+      const theirs = told ? unlike(print) || (voices.doubtful(speakerId, print) && byPieces()) : !(print && voices.recognizes(print, speakerId)) && byPieces();
       if (!theirs) {
         for (const word of stretch.words) taken.delete(word);
         continue;
       }
-      const ends = { start: stretch.words[0] !== words[0], end: stretch.words[stretch.words.length - 1] !== words[words.length - 1] };
-      const run = print ? await this.coreOf(speakerId, { stretch, samples, seconds, print }, ends, clock) : { stretch, samples, seconds, print };
+      // The run meets our words at an end within a piece's length of them: a piece over its edge takes in ours there.
+      const first = words.indexOf(stretch.words[0]!);
+      const last = words.indexOf(stretch.words[stretch.words.length - 1]!);
+      const ends = {
+        start: first > 0 && stretch.words[0]!.start - words[first - 1]!.end < GATE_WINDOW_SECONDS,
+        end: last < words.length - 1 && words[last + 1]!.start - stretch.words[stretch.words.length - 1]!.end < GATE_WINDOW_SECONDS,
+      };
+      const run = told ? await this.coreOf(speakerId, { stretch, samples, seconds, print }, ends, clock) : { stretch, samples, seconds, print };
       if (this.closed) return undefined;
       for (const word of stretch.words) if (!run.stretch.words.includes(word)) taken.delete(word);
       apart.push({ speaker: run.stretch.speaker, words: run.stretch.words, samples: run.samples, seconds: run.seconds, ...(run.print && { print: run.print, ...(this.options.report && { likeness: voices.describe(run.print) }) }), kept: false, apart: true });

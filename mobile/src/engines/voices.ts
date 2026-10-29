@@ -154,9 +154,10 @@ export function loadMyVoiceHere(mic: string): LearnedPrints | undefined {
   const kept = listMics().find((other) => other.mic === mic);
   const voice = kept && readRecord(myVoiceThrough(kept.id));
   if (!voice) return undefined;
-  const { lines, seconds } = voice.record;
+  const { lines, seconds, likenesses } = voice.record;
   if (typeof lines !== 'number' || !(lines >= 1) || !voice.print.every(Number.isFinite)) return undefined;
-  return { sum: voice.print, count: lines, ...(typeof seconds === 'number' && seconds > 0 && { seconds }) };
+  const known = Array.isArray(likenesses) ? likenesses.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)) : [];
+  return { sum: voice.print, count: lines, ...(typeof seconds === 'number' && seconds > 0 && { seconds }), ...(known.length > 0 && { likenesses: known }) };
 }
 
 /**
@@ -171,7 +172,7 @@ export async function saveMyVoiceHere(mic: string, learned: LearnedPrints): Prom
   // them all leaves none behind.
   for (const old of others.slice(KEPT_MICS - 1)) await SecureStore.deleteItemAsync(myVoiceThrough(old.id));
   await writeMics([kept, ...others.slice(0, KEPT_MICS - 1)]);
-  await writeVoice(myVoiceThrough(kept.id), learned.sum, kept.saved, { lines: learned.count, seconds: learned.seconds });
+  await writeVoice(myVoiceThrough(kept.id), learned.sum, kept.saved, { lines: learned.count, seconds: learned.seconds, likenesses: learned.likenesses });
 }
 
 /** Forgets my voice as heard through every microphone. */

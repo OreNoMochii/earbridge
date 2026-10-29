@@ -171,6 +171,10 @@ const VOICES: Record<number, number[]> = {
   14000: [0.376, 0.5, -0.78],
   15000: [0.15, 0, 0.9887],
   16000: [0, 0.3, -0.954],
+  17000: [0.3, 0.9327, 0.2],
+  18000: [0.25, 0.8818, 0.4],
+  19000: [0.15, 0.9247, 0.35],
+  20000: [0.3, 0.75, 0.589],
 };
 const printer = {
   mine: new Float32Array(VOICES[1000]!),
@@ -500,6 +504,74 @@ describe('voices', () => {
     assert.equal(after.useMyVoiceHere(undefined), true);
     assert.equal(after.printHere('me'), undefined);
     assert.equal(after.myVoiceHere, undefined);
+  });
+
+  it('tells more voices from mine here the more alike each of my lines has been to it', () => {
+    const bar = (voices: VoiceFilter) => voices.describe(print(17000)).unlikeMineBelow?.toFixed(3);
+    const voices = new VoiceFilter(printer);
+    for (let i = 0; i < 3; i++) assert.equal(voices.admits('me', print(7000), 2, true), true); // me, as heard here, each line alike
+    assert.deepEqual(voices.myVoiceHere!.likenesses!.map((value) => Number(value.toFixed(3))), [1, 1]);
+    // Someone else, somewhat like my recording and a little like my voice here, which each of my lines has been clearly like.
+    assert.deepEqual([bar(voices), voices.unlike('me', print(17000))], ['0.400', true]);
+    assert.equal(voices.admits('me', print(17000), 2, true), false);
+    // As learned before the app told how alike my lines were: the bar where it starts, which that is over.
+    const older = new VoiceFilter(printer);
+    assert.equal(older.useMyVoiceHere({ sum: print(7000), count: 3 }), true);
+    assert.deepEqual([bar(older), older.unlike('me', print(17000))], ['0.300', false]);
+    assert.equal(older.admits('me', print(17000), 2, true), true);
+    // On a phone where each of my lines is only somewhat like my voice here, as on the user's: the bar stays where it starts.
+    const uneven = new VoiceFilter(printer);
+    assert.equal(uneven.useMyVoiceHere({ sum: print(7000), count: 3, likenesses: [0.5, 0.45] }), true);
+    assert.deepEqual([bar(uneven), uneven.admits('me', print(17000), 2, true)], ['0.300', true]);
+    // In between, the bar is in between; what is no likeness is left out.
+    const between = new VoiceFilter(printer);
+    assert.equal(between.useMyVoiceHere({ sum: print(7000), count: 3, likenesses: [Number.NaN, 2, 0.6, 0.9] }), true);
+    assert.deepEqual(between.myVoiceHere!.likenesses, [0.6, 0.9]);
+    assert.deepEqual([bar(between), between.admits('me', print(17000), 2, true)], ['0.350', false]);
+    // Never over what is clearly my voice here anyway, however alike my lines; and never from one line alone.
+    const even = new VoiceFilter(printer);
+    assert.equal(even.useMyVoiceHere({ sum: print(7000), count: 3, likenesses: [0.95, 0.9, 0.98] }), true);
+    assert.equal(bar(even), '0.400');
+    assert.equal(even.useMyVoiceHere({ sum: print(7000), count: 3, likenesses: [0.95] }), true);
+    assert.equal(bar(even), '0.300');
+    // A line of mine only somewhat like my voice here, asked for: the bar falls back.
+    voices.translated('me', print(4000), 2, true);
+    assert.deepEqual(voices.myVoiceHere!.likenesses!.map((value) => Number(value.toFixed(2))), [1, 1, 0.48]);
+    assert.equal(bar(voices), '0.300');
+    assert.equal(voices.admits('me', print(17000), 2, true), true);
+    // No bar until my voice here is settled.
+    const fresh = new VoiceFilter(printer);
+    assert.equal(fresh.admits('me', print(7000), 2, true), true);
+    assert.equal(bar(fresh), undefined);
+    assert.equal(fresh.unlike('me', print(17000)), false);
+  });
+
+  it('leaves in doubt a voice clearly like mine here, yet less so than each of my lines has been', () => {
+    const doubt = (voices: VoiceFilter, value: number) => [voices.describe(print(value)).doubtMineBelow?.toFixed(3), voices.doubtful('me', print(value)), voices.unlike('me', print(value))];
+    const voices = new VoiceFilter(printer);
+    for (let i = 0; i < 3; i++) assert.equal(voices.admits('me', print(7000), 2, true), true); // me, as heard here, each line alike
+    // Someone else, clearly like my voice here by that measure alone, as a few are, but far less so than my own lines: in doubt, not clearly anyone's.
+    assert.deepEqual(doubt(voices, 18000), ['0.750', true, false]);
+    assert.equal(voices.recognizes(print(18000), 'me'), true);
+    // One less like it than the bar is clearly someone else's, and in doubt all the more.
+    assert.deepEqual(doubt(voices, 17000), ['0.750', true, true]);
+    // My own voice, as alike as my lines have been: not in doubt.
+    assert.deepEqual(doubt(voices, 7000), ['0.750', false, false]);
+    // On a phone where each of my lines is only somewhat like my voice here, as on the user's: nothing clearly like it is in doubt.
+    const uneven = new VoiceFilter(printer);
+    assert.equal(uneven.useMyVoiceHere({ sum: print(7000), count: 3, likenesses: [0.5, 0.45] }), true);
+    assert.deepEqual(doubt(uneven, 18000), [undefined, false, false]);
+    assert.deepEqual(doubt(uneven, 17000), [undefined, false, false]);
+    // Heard evenly enough for a doubt only just over what is clearly my voice here: in doubt under that alone.
+    const even = new VoiceFilter(printer);
+    assert.equal(even.useMyVoiceHere({ sum: print(7000), count: 3, likenesses: [0.75, 0.7] }), true);
+    assert.deepEqual(doubt(even, 18000), ['0.450', false, false]);
+    assert.equal(even.useMyVoiceHere({ sum: print(7000), count: 3, likenesses: [0.75, 0.8] }), true);
+    assert.deepEqual(doubt(even, 18000), ['0.500', true, false]);
+    // Nothing is in doubt until my voice here is settled.
+    const fresh = new VoiceFilter(printer);
+    assert.equal(fresh.admits('me', print(7000), 2, true), true);
+    assert.deepEqual(doubt(fresh, 18000), [undefined, false, false]);
   });
 
   it('tells the gate whose voice a piece of sound is in, once the voices to keep out are known', () => {
@@ -1696,6 +1768,33 @@ describe('one phone in a noisy place', () => {
     assert.deepEqual(of('utterance').map((m) => m.text).slice(-1), ['Five']);
   });
 
+  it('skips held speech a little like my voice here, once each of my lines has been clearly alike it', async () => {
+    const { solo, stt, of, words } = soloSetup({ voices: printer });
+    solo.setTalkMode('hold');
+    for (let i = 0; i < 3; i++) solo.sendAudio(sound(2, 7000)); // me, as heard here, each line alike
+    solo.sendAudio(sound(2, 17000)); // someone else, somewhat like my recording and a little like my voice here
+    stt.last.say('One', ['en'], { start: 0, end: 2 });
+    stt.last.say('Two', ['en'], { start: 2, end: 4 });
+    stt.last.say('Three', ['en'], { start: 4, end: 6 });
+    stt.last.say('Four', ['en'], { start: 6, end: 8 });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text), ['One', 'Two', 'Three']);
+    assert.deepEqual(
+      of('skipped').map((m) => [words(m), m.reason]),
+      [['Four', 'voice']],
+      'a little like my voice here, which each of my lines has been clearly like',
+    );
+    // Asked for, it is translated, and my voice here is known to be less even: the next such line passes.
+    solo.accept(of('skipped')[0]!.id);
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(-1), ['Four']);
+    solo.sendAudio(sound(2, 17000));
+    stt.last.say('Five', ['en'], { start: 8, end: 10 });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(-1), ['Five']);
+    assert.equal(of('skipped').length, 1);
+  });
+
   it('settles my voice here from two lines long enough, as from three', async () => {
     const { solo, stt, of, words } = soloSetup({ voices: printer });
     solo.setTalkMode('hold');
@@ -2002,7 +2101,7 @@ describe('one phone with a recognizer paid by the second', () => {
         ],
         [
           ['So friend. Where now?', true, false, undefined, true],
-          ['Hey you two.', false, true, 'u7', false],
+          ['Hey you two.', false, true, 'u7', true],
         ],
       ],
     );
@@ -2154,6 +2253,188 @@ describe('one phone with a recognizer paid by the second', () => {
         ],
       ],
     );
+  });
+
+  it('leaves out whole a run taken for someone else that starts a pause after my words, as no piece over it takes in mine', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, of } = soloSetup({ voices: blendPrinter, metered: true, report: (entry) => entries.push(entry) });
+    solo.setTalkMode('hold');
+    solo.setSpeaker('me');
+    const word = (text: string, start: number, end = start + 0.4) => ({ text, start, end, speaker: '0' });
+    // Three lines in my voice as heard here settle it.
+    await hearIn(solo, 2, 7000);
+    for (let i = 1; i <= 3; i++) {
+      await hearIn(solo, 2, 7000);
+      stt.last.say('Yes.', ['en'], { start: i * 2, end: i * 2 + 2 });
+      await settle();
+    }
+    assert.deepEqual(of('utterance').map((m) => m.text), ['Yes.', 'Yes.', 'Yes.']);
+
+    // After a pause of a piece's length, someone else talks, their first word a little more like my voice than
+    // the rest, as words vary: no piece over the run's start takes in words of mine, so none of it is given back.
+    await hearIn(solo, 2, 7000); // 8–10 s: me
+    await hearIn(solo, 1.5, 0); // 10–11.5 s: a pause
+    await hearIn(solo, 0.5, 19000); // 11.5–12 s: someone else, somewhat like my recording
+    await hearIn(solo, 1.4, 6000); // 12–13.4 s: someone else
+    await hearIn(solo, 2.1, 7000); // 13.4–15.5 s: me
+    stt.last.say('Hello there friend. Did you hear what happened? Thanks.', Array(9).fill('en'), {
+      start: 8.2,
+      end: 14.1,
+      words: [
+        word('Hello', 8.2),
+        word('there', 8.7),
+        word('friend.', 9.2, 9.8),
+        word('Did', 11.5, 12),
+        word('you', 12, 12.3),
+        word('hear', 12.35, 12.65),
+        word('what', 12.7, 13),
+        word('happened?', 13.05, 13.4),
+        word('Thanks.', 13.6, 14.1),
+      ],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(3), ['Hello there friend. Thanks.']);
+    assert.deepEqual(of('skipped').map((m) => [m.id, m.reason]), [['u5', 'voice']]);
+
+    // After a shorter pause, a piece over the run's first word may take in my last: that word is given back.
+    await hearIn(solo, 0.2, 7000); // 15.5–15.7 s: me
+    await hearIn(solo, 1.3, 0); // 15.7–17 s: a pause
+    await hearIn(solo, 0.5, 19000); // 17–17.5 s: someone else
+    await hearIn(solo, 1.4, 6000); // 17.5–18.9 s: someone else
+    await hearIn(solo, 2.1, 7000); // 18.9–21 s: me
+    stt.last.say('So. Did you hear what happened? Sure.', Array(7).fill('en'), {
+      start: 15.2,
+      end: 19.6,
+      words: [word('So.', 15.2, 15.7), word('Did', 17, 17.5), word('you', 17.5, 17.8), word('hear', 17.85, 18.15), word('what', 18.2, 18.5), word('happened?', 18.55, 18.9), word('Sure.', 19.1, 19.6)],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(4), ['So. Did Sure.']);
+    assert.deepEqual(of('skipped').map((m) => [m.id, m.reason]).slice(1), [['u7', 'voice']]);
+    assert.deepEqual(
+      entries.filter((e) => e.type === 'parts').map((e) => e.type === 'parts' && e.parts.map((part) => [part.text, part.kept, part.id])),
+      [
+        [
+          ['Hello there friend. Thanks.', true, undefined],
+          ['Did you hear what happened?', false, 'u5'],
+        ],
+        [
+          ['So. Did Sure.', true, undefined],
+          ['you hear what happened?', false, 'u7'],
+        ],
+      ],
+    );
+  });
+
+  it('leaves out a run taken for someone else whose own sound is only in doubt, by the pieces over it, once my voice here is heard evenly', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, of } = soloSetup({ voices: blendPrinter, metered: true, report: (entry) => entries.push(entry) });
+    solo.setTalkMode('hold');
+    solo.setSpeaker('me');
+    const word = (text: string, start: number, end: number) => ({ text, start, end, speaker: '0' });
+    // Three lines in my voice as heard here settle it, each as alike it as can be.
+    await hearIn(solo, 2, 7000);
+    for (let i = 1; i <= 3; i++) {
+      await hearIn(solo, 2, 7000);
+      stt.last.say('Yes.', ['en'], { start: i * 2, end: i * 2 + 2 });
+      await settle();
+    }
+    assert.deepEqual(of('utterance').map((m) => m.text), ['Yes.', 'Yes.', 'Yes.']);
+
+    // Someone else, in a voice clearly like mine here by that measure alone, talks between bursts of a crowd's
+    // noise the recognizer made nothing of: the pieces over their words take in the noise and are unlike my
+    // voice, while their words alone are only in doubt, each of my lines having been far more alike it.
+    await hearIn(solo, 1, 7000); // 8–9 s: me
+    await hearIn(solo, 1, 6000); // 9–10 s: the crowd
+    await hearIn(solo, 1.4, 20000); // 10–11.4 s: someone else
+    await hearIn(solo, 1.6, 6000); // 11.4–13 s: the crowd
+    await hearIn(solo, 2, 7000); // 13–15 s: me
+    stt.last.say('Hello there. Did you hear what? Thanks.', Array(7).fill('en'), {
+      start: 8.1,
+      end: 13.7,
+      words: [word('Hello', 8.1, 8.4), word('there.', 8.5, 8.9), word('Did', 10, 10.3), word('you', 10.35, 10.65), word('hear', 10.7, 11), word('what?', 11.1, 11.4), word('Thanks.', 13.2, 13.7)],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(3), ['Hello there. Thanks.']);
+    assert.deepEqual(of('skipped').map((m) => [m.id, m.reason]), [['u5', 'voice']]);
+    const parts = entries.filter((e) => e.type === 'parts').map((e) => e.type === 'parts' && e.parts);
+    assert.deepEqual(parts.map((p) => p && p.map((part) => [part.text, part.kept, part.id])), [
+      [
+        ['Hello there. Thanks.', true, undefined],
+        ['Did you hear what?', false, 'u5'],
+      ],
+    ]);
+    const theirs = (parts[0] || [])[1]!.voice!;
+    assert.deepEqual([Number(theirs.mineHere.toFixed(2)), theirs.unlikeMineBelow, Number(theirs.doubtMineBelow?.toFixed(3))], [0.58, 0.4, 0.75]);
+  });
+
+  it('gives back a few words of mine taken for someone else by the pieces over them when their own sound is clearly my voice', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, of } = soloSetup({ voices: blendPrinter, metered: true, report: (entry) => entries.push(entry) });
+    solo.setTalkMode('hold');
+    solo.setSpeaker('me');
+    const word = (text: string, start: number, end: number) => ({ text, start, end, speaker: '0' });
+    // Three lines in my voice as heard here settle it.
+    await hearIn(solo, 2, 7000);
+    for (let i = 1; i <= 3; i++) {
+      await hearIn(solo, 2, 7000);
+      stt.last.say('Yes.', ['en'], { start: i * 2, end: i * 2 + 2 });
+      await settle();
+    }
+    assert.deepEqual(of('utterance').map((m) => m.text), ['Yes.', 'Yes.', 'Yes.']);
+
+    // A few words of mine between bursts of a crowd's noise: every piece over them takes in more of the crowd
+    // than of me, yet their own sound, though too short to tell a stranger's by, is clearly my voice.
+    await hearIn(solo, 1.5, 7000); // 8–9.5 s: me
+    await hearIn(solo, 1, 6000); // 9.5–10.5 s: the crowd
+    await hearIn(solo, 0.7, 7000); // 10.5–11.2 s: me
+    await hearIn(solo, 1, 6000); // 11.2–12.2 s: the crowd
+    await hearIn(solo, 1.8, 7000); // 12.2–14 s: me
+    stt.last.say('Hello there friend. Have a nice day. Thanks again.', Array(9).fill('en'), {
+      start: 8.1,
+      end: 13.4,
+      words: [
+        word('Hello', 8.1, 8.4),
+        word('there', 8.5, 8.8),
+        word('friend.', 8.9, 9.4),
+        word('Have', 10.5, 10.65),
+        word('a', 10.7, 10.8),
+        word('nice', 10.85, 11),
+        word('day.', 11.05, 11.2),
+        word('Thanks', 12.4, 12.8),
+        word('again.', 12.9, 13.4),
+      ],
+    });
+    await settle();
+    assert.deepEqual(
+      entries.filter((e) => e.type === 'gate' && e.start >= 9.5 && e.start <= 11).map((e) => e.type === 'gate' && e.verdict),
+      ['other', 'other', 'other', 'other'],
+      'the pieces over those words are against them',
+    );
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(3), ['Hello there friend. Have a nice day. Thanks again.']);
+    assert.deepEqual(of('skipped'), []);
+
+    // A few words of someone else's between such bursts: their sound is not my voice, so the pieces decide.
+    await hearIn(solo, 1, 6000); // 14–15 s: the crowd
+    await hearIn(solo, 0.7, 10000); // 15–15.7 s: someone else
+    await hearIn(solo, 1, 6000); // 15.7–16.7 s: the crowd
+    await hearIn(solo, 1.8, 7000); // 16.7–18.5 s: me
+    stt.last.say('Hey you. Sure thing.', Array(4).fill('en'), {
+      start: 15,
+      end: 17.8,
+      words: [word('Hey', 15, 15.3), word('you.', 15.35, 15.7), word('Sure', 16.9, 17.2), word('thing.', 17.3, 17.8)],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(4), ['Sure thing.']);
+    assert.deepEqual(of('skipped').map((m) => [m.id, m.reason]), [['u6', 'voice']]);
+    const parts = entries.filter((e) => e.type === 'parts').map((e) => e.type === 'parts' && e.parts);
+    assert.deepEqual(parts.map((p) => p && p.map((part) => [part.text, part.kept, part.id])), [
+      [
+        ['Sure thing.', true, undefined],
+        ['Hey you.', false, 'u6'],
+      ],
+    ]);
+    const theirs = (parts[0] || [])[1]!.voice!;
+    assert.ok(theirs.mine < 0 && theirs.mineHere < 0, `their short run's own sound is reported: ${JSON.stringify(theirs)}`);
   });
 
   it('sends on what was heard but not judged yet when a turn ends, so that no short line is lost', async () => {

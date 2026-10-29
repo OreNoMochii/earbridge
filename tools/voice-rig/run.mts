@@ -113,7 +113,8 @@ const out = `${clip}.run.jsonl`;
 writeFileSync(out, [...entries.map((e) => JSON.stringify({ kind: 'report', ...e })), ...messages.map((m) => JSON.stringify({ kind: 'message', ...m }))].join('\n') + '\n');
 
 // ---- Scoring against the truth.
-const truthFile = clip.replace(/.*\//, '').startsWith('late-') ? 'late-truth.json' : 'truth.json';
+const truthFile = clip.replace(/.*\//, '').replace(/(clean|snr\d+)\.wav$/, 'truth.json');
+if (truthFile === clip.replace(/.*\//, '')) throw new Error(`no truth file is known for ${clip}`);
 const truth = JSON.parse(readFileSync(`${HERE}clips/${truthFile}`, 'utf8')).lines as Array<{ speaker: string; start: number; end: number; text: string }>;
 const who = (s: number, e: number) => {
   let best: string | undefined;
@@ -133,7 +134,7 @@ const partsOf = new Map(entries.filter((e) => e.type === 'parts').map((e) => [e.
 console.log(`\n=== ${clip}`);
 for (const line of entries.filter((e) => e.type === 'line')) {
   const v = line.voice ?? {};
-  console.log(`[${line.at.toFixed(1)}s] ${line.outcome}${line.reason ? ` (${line.reason})` : ''} mine=${r(v.mine)} here=${r(v.mineHere)} ${line.seconds?.toFixed(1)}s: ${JSON.stringify(line.text)}${line.kept !== undefined ? `\n        kept: ${JSON.stringify(line.kept)}` : ''}`);
+  console.log(`[${line.at.toFixed(1)}s] ${line.outcome}${line.reason ? ` (${line.reason})` : ''} mine=${r(v.mine)} here=${r(v.mineHere)}${v.unlikeMineBelow !== undefined ? ` bar=${r(v.unlikeMineBelow)}` : ''}${v.doubtMineBelow !== undefined ? ` doubt=${r(v.doubtMineBelow)}` : ''} ${line.seconds?.toFixed(1)}s: ${JSON.stringify(line.text)}${line.kept !== undefined ? `\n        kept: ${JSON.stringify(line.kept)}` : ''}`);
   const parts = partsOf.get(line.id);
   for (const part of parts ?? []) console.log(`        part ${part.speaker}${part.apart ? ' (apart)' : ''} ${part.kept ? 'kept' : 'left out'} mine=${r(part.voice?.mine)} here=${r(part.voice?.mineHere)} ${part.seconds.toFixed(1)}s: ${JSON.stringify(part.text)}`);
   if (!line.words) continue;

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Builds test clips: me (the macOS voice Daniel) holding the button, another talker (Samantha, or
-the voice named as the first argument) interjecting between and over my lines, with and without
-babble. With --late, three more of my lines come first, with pauses between, so that my voice here is
-settled (three prints) before anyone else talks (files are then named late-*).
+the voice named as the first argument, e.g. Tessa, whose voice the phone's model finds rather like
+Daniel's) interjecting between and over my lines, with and without babble. With --late, three more
+of my lines come first, with pauses between, so that my voice here is settled (three prints) before
+anyone else talks (files are then named late-*; with a voice named, late-tessa-* and so on).
 
 Writes 16 kHz mono PCM16 .wav files next to this script, plus truth.json with each
 line's speaker and times.
@@ -61,8 +62,9 @@ if LATE:
         (ME, 6.5, "I'll have the same as yesterday, thank you very much."),
         (ME, 11.5, "And a glass of water, if that's no trouble."),
     ] + [(who, start + 16.0, text) for who, start, text in SCRIPT]
-PREFIX = 'late-' if LATE else ''
 VOICES = {ME: 'Daniel', OTHER: ARGS[0] if ARGS else 'Samantha'}
+# Named after the other voice when one is given, so that the clips with each voice sit side by side.
+PREFIX = ('late-' if LATE else '') + (f'{ARGS[0].lower()}-' if ARGS else '')
 BABBLE = ['Karen', 'Tessa', 'Moira', 'Rishi', 'Fred', 'Tara']
 BABBLE_TEXT = (
     "So I told him we should probably leave earlier because the traffic on the way to the "
