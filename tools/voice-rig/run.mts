@@ -9,6 +9,8 @@ import { DeepgramProvider } from '../../shared/pipeline/stt/deepgram.ts';
 import { openDeepgramSocket } from '../../server/src/deepgram-socket.ts';
 import { FakeTranslator } from '../../server/test/fakes.ts';
 import { silentLogger } from '../../shared/pipeline/log.ts';
+import { CAMPPLUS_BARS, ERES2NET_BARS } from '../../shared/pipeline/voices.ts';
+import type { VoiceBars } from '../../shared/pipeline/voices.ts';
 
 process.loadEnvFile(new URL('../../.env', import.meta.url).pathname);
 const apiKey = process.env.DEEPGRAM_API_KEY;
@@ -29,8 +31,20 @@ function pcmOf(path: string): Int16Array {
   throw new Error(`no data chunk in ${path}`);
 }
 
-// The phone's voice-print module, stood in for by the same model on this Mac.
-const python = spawn(`${HERE}venv/bin/python`, [`${HERE}printer.py`, `${HERE}model/campplus.onnx`], { stdio: ['pipe', 'pipe', 'inherit'] });
+// The phone's voice-print module, stood in for by the same model on this Mac (or by another
+// speaker model, to try one: VOICE_MODEL=<path to its .onnx>), with the bars that go with
+// the model (see VoiceBars), known by its file name, or given: VOICE_BARS=same,alike,unlike.
+const model = process.env.VOICE_MODEL ?? `${HERE}model/campplus.onnx`;
+const bars: VoiceBars = barsOf(process.env.VOICE_BARS, model);
+console.log(`model ${model.split('/').pop()}, bars same ${bars.same} alike ${bars.alike} unlike ${bars.unlike}`);
+
+function barsOf(given: string | undefined, modelPath: string): VoiceBars {
+  if (!given) return /eres2net/i.test(modelPath) ? ERES2NET_BARS : CAMPPLUS_BARS;
+  const [same, alike, unlike] = given.split(',').map(Number);
+  if ([same, alike, unlike].some((bar) => bar === undefined || !Number.isFinite(bar))) throw new Error('VOICE_BARS must be three numbers: same,alike,unlike');
+  return { same: same!, alike: alike!, unlike: unlike! };
+}
+const python = spawn(`${HERE}venv/bin/python`, [`${HERE}printer.py`, model], { stdio: ['pipe', 'pipe', 'inherit'] });
 let pending: Array<(print: Float32Array | undefined) => void> = [];
 let incoming = Buffer.alloc(0);
 python.stdout.on('data', (data: Buffer) => {
@@ -80,7 +94,7 @@ const solo = new SoloConversation({
   },
   log: silentLogger,
   newId: () => `u${++ids}`,
-  voices: { mine, print },
+  voices: { mine, print, bars },
   metered: true,
   report: (entry) => entries.push(entry),
 });

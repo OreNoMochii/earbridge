@@ -29,7 +29,11 @@ private const val SEPARATOR = "convtasnet.onnx"
 private const val BLOCK = 20
 private const val HOP = 15
 private const val OVERLAP = BLOCK - HOP
-/** A separated voice at least this much like one of the two voice prints is kept. */
+/**
+ * A separated voice at least this much like one of the two voice prints is kept: cosine similarity
+ * on the scale of the phone's speaker model (CAM++; between its `alike` and `same` bars, see
+ * VoiceBars in shared/pipeline/voices.ts), to change with the model.
+ */
 private const val KEEP = 0.3
 /** A separated voice quieter than this (RMS, full scale 1) is nothing. */
 private const val FLOOR = 1e-4

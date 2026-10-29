@@ -9,7 +9,52 @@ export interface VoicePrinter {
   mine: Float32Array;
   /** A voice print of some 16 kHz mono speech; undefined when it cannot make one. */
   print(samples: Int16Array): Promise<Float32Array | undefined>;
+  /** How alike its prints must be to be the same voice: on its model's own scale. */
+  bars: VoiceBars;
 }
+
+/**
+ * How alike two voice prints must be (cosine similarity) to be judged the same voice. Each
+ * speaker model spreads voices over that scale in its own way, so the bars go with the
+ * model that made the prints (see `VoicePrinter`); these were found on the test rig's
+ * clips (tools/voice-rig, `probe/sweep.py`) and the phone's talk reports.
+ */
+export interface VoiceBars {
+  /**
+   * At least this alike: clearly the same voice. With the phone's speaker model (CAM++),
+   * someone else's voice gets there about 1 time in 100; 2 seconds of the same voice in loud
+   * chatter fall short about 4 times in 100.
+   */
+  same: number;
+  /**
+   * Voice prints less alike than this are of different voices; at least this alike, maybe of
+   * the same voice sounding different here: next to its recording, made in another place or
+   * with other noise around, a voice heard on a phone has fallen between the two. Only speech
+   * somewhat like a voice as recorded or learned teaches how it sounds here, and only speech
+   * unlike mine how theirs does.
+   */
+  alike: number;
+  /**
+   * Once my voice as heard here is settled (see SETTLED_PRINTS), speech less like it than this
+   * is someone else's, however much like my recording, which a voice heard through earphones
+   * matches poorly: on such a phone, with CAM++, the user's own lines scored 0.43 to 0.73
+   * against their voice here, others' speech over the button 0.18 to 0.35; against a voice
+   * here learned from one line only, the user's own scored as low as 0.25.
+   */
+  unlike: number;
+}
+
+/** The bars for CAM++ (3D-Speaker, Chinese and English), the phone's speaker model. */
+export const CAMPPLUS_BARS: VoiceBars = { same: 0.4, alike: 0.2, unlike: 0.3 };
+/**
+ * The bars for ERes2Net (3D-Speaker, VoxCeleb), which spreads voices wider: on the rig's
+ * clips of recorded voices they lose 125 of my 2288 words alone and let 114 of a stranger's
+ * 996 through, against 177 and 346 for CAM++ at its bars, most of the gain from the higher
+ * `unlike` (a stranger's lines through an earphone channel stay under it, mine over it there,
+ * which may not hold for a voice heard as unevenly as the user's). It prints three times
+ * slower than CAM++, and is not the phone's model.
+ */
+export const ERES2NET_BARS: VoiceBars = { same: 0.5, alike: 0.15, unlike: 0.5 };
 
 /** How alike a voice is to each of the two (see `similarity`); -1 where that voice is unknown. */
 export interface VoiceLikeness {
@@ -21,7 +66,7 @@ export interface VoiceLikeness {
   partnerHere: number;
   /** Under how alike to mine as heard here a voice is someone else's (see `unlike`), once mine here is settled. */
   unlikeMineBelow?: number;
-  /** Under how alike to mine as heard here a voice is in doubt (see `doubtful`), when any over SAME_VOICE is. */
+  /** Under how alike to mine as heard here a voice is in doubt (see `doubtful`), when any over `same` is. */
   doubtMineBelow?: number;
 }
 
@@ -47,41 +92,19 @@ export const MIN_LEARN_SECONDS = 1.5;
 /** Long speech is printed from its middle part, which is plenty and keeps the phone quick. */
 const MAX_PRINT_SECONDS = 10;
 /**
- * How alike two voice prints must be (cosine similarity) to be clearly the same voice. With
- * the phone's speaker model (CAM++), someone else's voice gets there about 1 time in 100;
- * 2 seconds of the same voice in loud chatter fall short about 4 times in 100.
- */
-const SAME_VOICE = 0.4;
-/**
- * Voice prints less alike than this are of different voices; at least this alike, maybe of
- * the same voice sounding different here: next to its recording, made in another place or
- * with other noise around, a voice heard on a phone has fallen between the two. Only speech
- * somewhat like a voice as recorded or learned teaches how it sounds here, and only speech
- * unlike mine how theirs does.
- */
-const ALIKE = 0.2;
-/**
- * Once my voice as heard here is settled (see SETTLED_PRINTS), speech less like it than this
- * is someone else's, however much like my recording, which a voice heard through earphones
- * matches poorly: on such a phone, the user's own lines scored 0.43 to 0.73 against their
- * voice here, others' speech over the button 0.18 to 0.35; against a voice here learned from
- * one line only, the user's own scored as low as 0.25.
- */
-const UNLIKE = 0.3;
-/**
- * That bar rises with how consistently the voice is heard here, up to SAME_VOICE: it is this
+ * The `unlike` bar rises with how consistently the voice is heard here, up to `same`: it is this
  * much under the least alike of the last things learned from, each measured against the
  * voice as learned before it. On the test rig, each of my lines is 0.8 to 0.95 like my voice
  * here, while a stranger's voice of the same gender is 0.3 to 0.4 like it, which the bar
  * alone lets through; on the phone above, the user's own lines were as little as 0.43 like
- * their voice here, which leaves the bar where it is. What the rise would put over SAME_VOICE
+ * their voice here, which leaves the bar where it is. What the rise would put over `same`
  * is not clearly someone else's, only in doubt (see `doubtful`).
  */
 const UNLIKE_MARGIN = 0.25;
 /**
  * Once a voice here is settled, it is not learned from speech this much less like it than
  * the least alike of the last things learned from: that is as likely someone else's whose
- * voice is somewhat like it (see SAME_VOICE), and learning from it drags the voice here
+ * voice is somewhat like it (see `same`), and learning from it drags the voice here
  * their way and lowers the bar (see UNLIKE_MARGIN) for the rest of the talk, as a stranger's
  * line 0.44 like my recording did on the rig, from 0.48 to 0.30, with his later words let
  * through. Smaller than UNLIKE_MARGIN: the voice still follows a slow change in how it is
@@ -89,7 +112,7 @@ const UNLIKE_MARGIN = 0.25;
  */
 const LEARN_MARGIN = 0.1;
 /**
- * A voice heard here is settled, and told from others by UNLIKE, once learned from this many
+ * A voice heard here is settled, and told from others by `unlike`, once learned from this many
  * prints, or from two prints of at least SETTLED_SECONDS of speech in all: a print of long
  * speech is a truer likeness than one of short speech.
  */
@@ -118,21 +141,26 @@ const HEARD_VOICES = 8;
  */
 export class VoiceFilter {
   private readonly printer: VoicePrinter;
+  private readonly bars: VoiceBars;
   private readonly mine: Float32Array;
   /** My voice as the phone hears it here, which a noisy place or a cold changes. */
-  private readonly mineHere = new LearnedVoice();
+  private readonly mineHere: LearnedVoice;
   /** The other person's voice once it is known, and how. */
   private theirs: { print: Float32Array; known: Exclude<PartnerVoice, 'unknown'> } | undefined;
   /** Their voice as the phone hears it here, once it is known. */
-  private readonly partnerHere = new LearnedVoice();
+  private readonly partnerHere: LearnedVoice;
   /** The voices heard for them, until theirs is known. */
-  private readonly heard = new HeardVoices();
+  private readonly heard: HeardVoices;
   /** Voices learned for them that the user said were someone else's: skipped while theirs is unknown. */
   private rejected: Float32Array[] = [];
 
   constructor(printer: VoicePrinter) {
     this.printer = printer;
+    this.bars = printer.bars;
     this.mine = normalized(printer.mine);
+    this.mineHere = new LearnedVoice(printer.bars);
+    this.partnerHere = new LearnedVoice(printer.bars);
+    this.heard = new HeardVoices(printer.bars);
   }
 
   /** How the other person's voice is known. */
@@ -205,7 +233,7 @@ export class VoiceFilter {
    *
    * Speech `vouched` for, by whoever holds a button to talk, is that side's unless its voice
    * is nothing like theirs, or clearly the other one's: a voice here may be only somewhat
-   * like its recording (see ALIKE). How it sounds here is learned from such speech only
+   * like its recording (see `alike`). How it sounds here is learned from such speech only
    * while nothing is known of that yet, as a first foothold: once it is, speech only
    * somewhat like the voice is as likely someone else's, said over the button, and what is
    * learned must not drift their way, or their voice passes for ours from then on. Once how
@@ -216,12 +244,12 @@ export class VoiceFilter {
     // So that each is still told when the noise around changes how it sounds; only from
     // what is clearly that voice, so that no one else's creeps in.
     const theirs = this.theirs?.print;
-    if (side === SOLO_THEM && this.likePartner(print) >= SAME_VOICE) {
-      if (theirs && similarity(print, theirs) >= SAME_VOICE) this.learn(SOLO_THEM, print, seconds);
+    if (side === SOLO_THEM && this.likePartner(print) >= this.bars.same) {
+      if (theirs && similarity(print, theirs) >= this.bars.same) this.learn(SOLO_THEM, print, seconds);
       return true;
     }
     if (this.isMine(print)) {
-      if (similarity(print, this.mine) >= SAME_VOICE) this.learn(SOLO_ME, print, seconds);
+      if (similarity(print, this.mine) >= this.bars.same) this.learn(SOLO_ME, print, seconds);
       return true;
     }
     if (vouched && this.mayBe(side, print) && !this.unlike(side, print)) {
@@ -236,7 +264,7 @@ export class VoiceFilter {
 
   /**
    * Whether a voice is clearly not `side`'s as that sounds here, once that is settled (see
-   * UNLIKE, and UNLIKE_MARGIN for how the bar rises): as learned from a line or two it is
+   * `unlike`, and UNLIKE_MARGIN for how the bar rises): as learned from a line or two it is
    * still a poor likeness, so nothing is unlike it until then. For me by my voice here
    * alone, which my recording matches poorly on some phones; for them by their voice as
    * learned too, which is of speech heard here as well.
@@ -253,7 +281,7 @@ export class VoiceFilter {
 
   /**
    * Whether a voice is not clearly `side`'s as that sounds here, for a voice heard so evenly
-   * here that one merely somewhat like it (see SAME_VOICE) is still less like it than each
+   * here that one merely somewhat like it (see `same`) is still less like it than each
    * of that side's own lines has been (see UNLIKE_MARGIN): such a voice is in doubt, neither
    * clearly that side's nor clearly someone else's (see `unlike`), and the pieces of a line's
    * sound may settle it (see `SoloConversation.splitBySound`). Never while that side's voice
@@ -271,14 +299,14 @@ export class VoiceFilter {
    * recording, so someone else's voice gets that near it now and then.
    */
   private mayBe(side: string, print: Float32Array): boolean {
-    if (side === SOLO_THEM) return this.theirs !== undefined && similarity(print, this.theirs.print) >= ALIKE;
-    return similarity(print, this.mine) >= ALIKE && this.likePartner(print) < SAME_VOICE;
+    if (side === SOLO_THEM) return this.theirs !== undefined && similarity(print, this.theirs.print) >= this.bars.alike;
+    return similarity(print, this.mine) >= this.bars.alike && this.likePartner(print) < this.bars.same;
   }
 
   /**
    * Whose voice a piece of sound is in, for speech expected from `sides` (by the "Me" /
    * "Them" choice, or both in "auto"), before it is recognized: 'ours' if it is somewhat
-   * like one of the two voices as recorded or learned (see ALIKE), or clearly like one as
+   * like one of the two voices as recorded or learned (see `alike`), or clearly like one as
    * heard here (only clearly: see `mayBe`); 'other' if it is nobody's we know; 'maybe'
    * while a wanted voice is not known well enough to leave anything out on its account:
    * theirs until it is known, but for a voice the user said was not theirs; either until
@@ -286,11 +314,11 @@ export class VoiceFilter {
    * recording. Learns nothing.
    */
   judge(sides: readonly string[], print: Float32Array): GateVerdict {
-    if (this.isMine(print) || similarity(print, this.mine) >= ALIKE) return 'ours';
+    if (this.isMine(print) || similarity(print, this.mine) >= this.bars.alike) return 'ours';
     if (sides.includes(SOLO_THEM)) {
       const theirs = this.theirs?.print;
       if (!theirs) return this.isRejected(print) ? 'other' : 'maybe';
-      if (this.likePartner(print) >= SAME_VOICE || similarity(print, theirs) >= ALIKE) return 'ours';
+      if (this.likePartner(print) >= this.bars.same || similarity(print, theirs) >= this.bars.alike) return 'ours';
       if (!this.partnerHere.print) return 'maybe';
     }
     if (sides.includes(SOLO_ME) && !this.mineHere.print) return 'maybe';
@@ -302,17 +330,17 @@ export class VoiceFilter {
    * anything; with a side, one that speaks for it (see `admits`).
    */
   recognizes(print: Float32Array, side?: string): boolean {
-    return this.isMine(print) || (side !== SOLO_ME && this.likePartner(print) >= SAME_VOICE);
+    return this.isMine(print) || (side !== SOLO_ME && this.likePartner(print) >= this.bars.same);
   }
 
   /** Whether two pieces of speech are clearly in the same voice. */
   sameVoice(a: Float32Array, b: Float32Array): boolean {
-    return similarity(a, b) >= SAME_VOICE;
+    return similarity(a, b) >= this.bars.same;
   }
 
   /** Whether a voice is clearly mine. */
   isMine(print: Float32Array): boolean {
-    return this.likeMine(print) >= SAME_VOICE;
+    return this.likeMine(print) >= this.bars.same;
   }
 
   /**
@@ -324,11 +352,11 @@ export class VoiceFilter {
   learn(side: string, print: Float32Array, seconds: number): void {
     if (seconds < MIN_LEARN_SECONDS) return;
     if (side !== SOLO_THEM) {
-      if (similarity(print, this.mine) >= ALIKE && this.mineHere.mayLearn(print)) this.mineHere.add(print, seconds);
+      if (similarity(print, this.mine) >= this.bars.alike && this.mineHere.mayLearn(print)) this.mineHere.add(print, seconds);
       return;
     }
     const theirs = this.theirs?.print;
-    if (theirs && similarity(print, theirs) >= ALIKE && this.likeMine(print) < ALIKE && this.partnerHere.mayLearn(print)) this.partnerHere.add(print, seconds);
+    if (theirs && similarity(print, theirs) >= this.bars.alike && this.likeMine(print) < this.bars.alike && this.partnerHere.mayLearn(print)) this.partnerHere.add(print, seconds);
   }
 
   /**
@@ -348,11 +376,11 @@ export class VoiceFilter {
       this.theirs = { print: normalized(print), known: 'learned' };
       this.partnerHere.forget();
     } else if (vouched && side !== SOLO_THEM) {
-      if (seconds >= MIN_LEARN_SECONDS && this.likePartner(print) < SAME_VOICE) this.mineHere.add(print, seconds);
+      if (seconds >= MIN_LEARN_SECONDS && this.likePartner(print) < this.bars.same) this.mineHere.add(print, seconds);
     } else if (this.checks(side)) {
       this.learn(side, print, seconds);
     } else {
-      this.rejected = this.rejected.filter((voice) => similarity(print, voice) < SAME_VOICE);
+      this.rejected = this.rejected.filter((voice) => similarity(print, voice) < this.bars.same);
       this.learnPartner(print, seconds);
     }
   }
@@ -415,7 +443,7 @@ export class VoiceFilter {
 
   /** Whether a voice is one the user said was not theirs. */
   private isRejected(print: Float32Array): boolean {
-    return this.rejected.some((voice) => similarity(print, voice) >= SAME_VOICE);
+    return this.rejected.some((voice) => similarity(print, voice) >= this.bars.same);
   }
 
   /** How alike a voice is to mine, as recorded or as heard here. */
@@ -440,12 +468,17 @@ interface HeardVoice {
 
 /** The voices heard for the other person while theirs is learned, to tell which is theirs. */
 class HeardVoices {
+  private readonly bars: VoiceBars;
   private voices: HeardVoice[] = [];
+
+  constructor(bars: VoiceBars) {
+    this.bars = bars;
+  }
 
   /** Something said in some voice: that voice once it is clearly theirs (see LEARN_LINES). */
   add(print: Float32Array, seconds: number): Float32Array | undefined {
     let voice: HeardVoice | undefined;
-    let best = SAME_VOICE;
+    let best = this.bars.same;
     for (const candidate of this.voices) {
       const likeness = similarity(print, normalized(candidate.sum));
       if (likeness >= best) [voice, best] = [candidate, likeness];
@@ -472,6 +505,7 @@ class HeardVoices {
 
 /** A voice learned from the last few voice prints of what someone said. */
 class LearnedVoice {
+  private readonly bars: VoiceBars;
   /** The sum of the prints, when any. */
   private sum: Float32Array | undefined;
   private count = 0;
@@ -481,6 +515,10 @@ class LearnedVoice {
   private likenesses: number[] = [];
   /** The voice print of the voice as learned so far; undefined while it is unknown. */
   print: Float32Array | undefined;
+
+  constructor(bars: VoiceBars) {
+    this.bars = bars;
+  }
 
   /** How alike a voice is to this one (see `similarity`); -1 while it is unknown. */
   likeness(print: Float32Array): number {
@@ -524,22 +562,22 @@ class LearnedVoice {
 
   /**
    * Under how alike to this voice another is clearly not it, once this one is settled (see
-   * UNLIKE, UNLIKE_MARGIN): the bar its own speech tells (see `bar`), but never under UNLIKE
-   * nor over SAME_VOICE, which is clearly this voice whatever the bar.
+   * `unlike`, UNLIKE_MARGIN): the bar its own speech tells (see `bar`), but never under `unlike`
+   * nor over `same`, which is clearly this voice whatever the bar.
    */
   get unlikeBelow(): number {
     const bar = this.bar;
-    return bar === undefined ? UNLIKE : Math.min(SAME_VOICE, Math.max(UNLIKE, bar));
+    return bar === undefined ? this.bars.unlike : Math.min(this.bars.same, Math.max(this.bars.unlike, bar));
   }
 
   /**
    * Under how alike to this voice another is in doubt (see `VoiceFilter.doubtful`): the bar
-   * its own speech tells (see `bar`), when that is over SAME_VOICE; undefined when nothing
+   * its own speech tells (see `bar`), when that is over `same`; undefined when nothing
    * clearly like this voice is in doubt.
    */
   get doubtBelow(): number | undefined {
     const bar = this.bar;
-    return bar !== undefined && bar > SAME_VOICE ? bar : undefined;
+    return bar !== undefined && bar > this.bars.same ? bar : undefined;
   }
 
   /** Learns from a print of that many seconds of speech. */

@@ -20,7 +20,7 @@ import {
 import type { RecordingProblem } from '../../../shared/protocol.ts';
 import { openMicrophone } from '../audio/mic.ts';
 import type { Microphone } from '../audio/mic.ts';
-import { prepareVoiceModel, printVoice, releaseVoiceModel, VOICE_MODEL_MB } from '../engines/voices.ts';
+import { prepareVoiceModel, printVoice, releaseVoiceModel, VOICE_BARS, VOICE_MODEL_MB } from '../engines/voices.ts';
 import { themedStyles, type } from '../theme.ts';
 import { Banner } from './Basics.tsx';
 import { Button } from './Button.tsx';
@@ -145,6 +145,7 @@ export function VoiceRecorder({ them, earphoneMic, save, onDone, onClose }: Voic
       // Their voice, told from mine: printing waits for the model.
       const voices = new VoiceFilter({
         mine,
+        bars: VOICE_BARS,
         print: async (samples) => {
           await model;
           return printVoice(samples);

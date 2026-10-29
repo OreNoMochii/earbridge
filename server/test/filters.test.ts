@@ -7,7 +7,7 @@ import { AudioHistory, LoudnessGate, NoisyPlace, speechLevel } from '../../share
 import type { TalkReportEntry } from '../../shared/pipeline/report.ts';
 import { SoloConversation } from '../../shared/pipeline/solo.ts';
 import type { SoloOptions } from '../../shared/pipeline/solo.ts';
-import { PartnerRecording, VoiceFilter, VoiceRecording } from '../../shared/pipeline/voices.ts';
+import { CAMPPLUS_BARS, PartnerRecording, VoiceFilter, VoiceRecording } from '../../shared/pipeline/voices.ts';
 import type { ServerMessage } from '../../shared/protocol.ts';
 import { FakeSttProvider, FakeTranslator, settle } from './fakes.ts';
 
@@ -180,6 +180,7 @@ const VOICES: Record<number, number[]> = {
 };
 const printer = {
   mine: new Float32Array(VOICES[1000]!),
+  bars: CAMPPLUS_BARS,
   print: async (samples: Int16Array) => {
     const print = VOICES[samples[Math.floor(samples.length / 2)]!];
     return print && new Float32Array(print);
@@ -192,6 +193,7 @@ const printer = {
  */
 const blendPrinter = {
   mine: new Float32Array(VOICES[3000]!),
+  bars: CAMPPLUS_BARS,
   print: async (samples: Int16Array) => {
     const heard = new Map<number, number>();
     for (const value of samples) if (value !== 0) heard.set(value, (heard.get(value) ?? 0) + 1);
@@ -204,6 +206,7 @@ const blendPrinter = {
 
 const gatePrinter = {
   mine: printer.mine,
+  bars: CAMPPLUS_BARS,
   print: async (samples: Int16Array) => {
     const heard = new Map<number, number>();
     for (const value of samples) if (value !== 0) heard.set(value, (heard.get(value) ?? 0) + 1);
@@ -265,7 +268,7 @@ describe('voices', () => {
   it('learns their voice among many others, each heard now and then', () => {
     // Voices nothing like each other: mine is the first.
     const voice = (i: number) => Float32Array.from({ length: 12 }, (_, j) => (i === j ? 1 : 0));
-    const voices = new VoiceFilter({ mine: voice(0), print: async () => undefined });
+    const voices = new VoiceFilter({ mine: voice(0), print: async () => undefined, bars: CAMPPLUS_BARS });
     // Strangers, each saying something once, and them now and then.
     for (let i = 2; i < 12; i++) {
       assert.equal(voices.admits('them', voice(i), 2), i <= 9, `the stranger ${i}`);
@@ -764,6 +767,7 @@ describe('recording their voice', () => {
   it('fails, rather than waits forever, when voice prints do', async () => {
     const broken = new VoiceFilter({
       mine: printer.mine,
+      bars: CAMPPLUS_BARS,
       print: async () => {
         throw new Error('out of memory');
       },

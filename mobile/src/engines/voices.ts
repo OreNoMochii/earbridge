@@ -5,17 +5,27 @@
 
 import * as SecureStore from 'expo-secure-store';
 
-import type { LearnedPrints, VoicePrinter } from '../../../shared/pipeline/voices.ts';
+import { CAMPPLUS_BARS } from '../../../shared/pipeline/voices.ts';
+import type { LearnedPrints, VoiceBars, VoicePrinter } from '../../../shared/pipeline/voices.ts';
 import EarbridgeVoice from '../../modules/earbridge-audio/src/EarbridgeVoiceModule.ts';
 import { fromBase64, toBase64 } from '../base64.ts';
 
-/** The speaker model. Voice prints can only be compared with prints from the same model. */
+/**
+ * The speaker model. Voice prints can only be compared with prints from the same model,
+ * and how alike they must be (`bars`) goes with it. Another model sherpa-onnx loads can
+ * take its place here, with its own bars (see `VoiceBars`; the microphone's voice separation
+ * keeps a voice by a bar of its own on the same scale, KEEP in VoiceIsolator.kt): a change of
+ * file forgets the recorded and learned voices, which were prints of the old one.
+ */
 const MODEL = {
   // CAM++ from 3D-Speaker, trained on Chinese and English speech (Apache-2.0).
   file: '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx',
   url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx',
   sha256: 'aa3cfc16963a10586a9393f5035d6d6b57e98d358b347f80c2a30bf4f00ceba2',
+  bars: CAMPPLUS_BARS satisfies VoiceBars,
 };
+/** How alike the model's voice prints must be to be the same voice. */
+export const VOICE_BARS: VoiceBars = MODEL.bars;
 /** The speaker model's file name, for the microphone's own voice separation (see mic.ts). */
 export const VOICE_MODEL_FILE = MODEL.file;
 /** About how much the voice model downloads, in MB. */
@@ -98,7 +108,7 @@ export async function conversationVoices(
   const mine = loadMyVoice();
   if (!mine || !canCheckVoices()) return undefined;
   await prepareVoiceModel(signal, (done) => progress(`Downloading the voice model… ${Math.round(done * 100)}%`));
-  return { mine, print: printVoice };
+  return { mine, print: printVoice, bars: MODEL.bars };
 }
 
 // ---------------------------------------------------------------- my voice
