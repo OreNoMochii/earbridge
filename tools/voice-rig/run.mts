@@ -3,7 +3,7 @@
 // voice prints — holding the button for "Me" throughout, and scores what was translated
 // against the clip's truth. Usage: node run.mts clips/clean.wav (see README.md)
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { SoloConversation } from '../../shared/pipeline/solo.ts';
 import { DeepgramProvider } from '../../shared/pipeline/stt/deepgram.ts';
 import { openDeepgramSocket } from '../../server/src/deepgram-socket.ts';
@@ -58,7 +58,9 @@ function print(samples: Int16Array): Promise<Float32Array | undefined> {
   return job;
 }
 
-const mine = await print(pcmOf(`${HERE}recording.wav`));
+// My recording: the clip set's own (clips/<set>recording.wav, a real voice's) when there is one, else the stand-in.
+const recordingFile = `${HERE}clips/${clip.replace(/.*\//, '').replace(/(clean|snr\d+)\.wav$/, 'recording.wav')}`;
+const mine = await print(pcmOf(existsSync(recordingFile) ? recordingFile : `${HERE}recording.wav`));
 if (!mine) throw new Error('no print of the recording');
 
 const messages: any[] = [];

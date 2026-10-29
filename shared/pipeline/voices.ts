@@ -79,6 +79,16 @@ const UNLIKE = 0.3;
  */
 const UNLIKE_MARGIN = 0.25;
 /**
+ * Once a voice here is settled, it is not learned from speech this much less like it than
+ * the least alike of the last things learned from: that is as likely someone else's whose
+ * voice is somewhat like it (see SAME_VOICE), and learning from it drags the voice here
+ * their way and lowers the bar (see UNLIKE_MARGIN) for the rest of the talk, as a stranger's
+ * line 0.44 like my recording did on the rig, from 0.48 to 0.30, with his later words let
+ * through. Smaller than UNLIKE_MARGIN: the voice still follows a slow change in how it is
+ * heard, and what the user asks for teaches it whatever its likeness (see `translated`).
+ */
+const LEARN_MARGIN = 0.1;
+/**
  * A voice heard here is settled, and told from others by UNLIKE, once learned from this many
  * prints, or from two prints of at least SETTLED_SECONDS of speech in all: a print of long
  * speech is a truer likeness than one of short speech.
@@ -307,17 +317,18 @@ export class VoiceFilter {
 
   /**
    * Speech that is that side's, e.g. translated after all: how its voice sounds here is
-   * learned from it, if it is still somewhat like that voice as recorded or learned.
-   * Theirs only once it is known, and only from speech unlike mine.
+   * learned from it, if it is still somewhat like that voice as recorded or learned, and
+   * not much less like the voice here than that side's own lines have been (see
+   * LEARN_MARGIN). Theirs only once it is known, and only from speech unlike mine.
    */
   learn(side: string, print: Float32Array, seconds: number): void {
     if (seconds < MIN_LEARN_SECONDS) return;
     if (side !== SOLO_THEM) {
-      if (similarity(print, this.mine) >= ALIKE) this.mineHere.add(print, seconds);
+      if (similarity(print, this.mine) >= ALIKE && this.mineHere.mayLearn(print)) this.mineHere.add(print, seconds);
       return;
     }
     const theirs = this.theirs?.print;
-    if (theirs && similarity(print, theirs) >= ALIKE && this.likeMine(print) < ALIKE) this.partnerHere.add(print, seconds);
+    if (theirs && similarity(print, theirs) >= ALIKE && this.likeMine(print) < ALIKE && this.partnerHere.mayLearn(print)) this.partnerHere.add(print, seconds);
   }
 
   /**
@@ -482,13 +493,33 @@ class LearnedVoice {
   }
 
   /**
+   * How alike to this voice the least alike of the last prints learned from was, once this
+   * one is settled: how evenly it is heard here. Not from one print alone, which is still a
+   * poor measure of that.
+   */
+  private get leastAlike(): number | undefined {
+    if (!this.settled || this.likenesses.length < 2) return undefined;
+    return Math.min(...this.likenesses);
+  }
+
+  /**
    * Under how alike to this voice another is not it, as far as its own speech tells, once
    * this one is settled: the least alike of the last prints learned from, less UNLIKE_MARGIN.
-   * Not from one print alone, which is still a poor measure of how evenly the voice is heard.
    */
   private get bar(): number | undefined {
-    if (!this.settled || this.likenesses.length < 2) return undefined;
-    return Math.min(...this.likenesses) - UNLIKE_MARGIN;
+    const least = this.leastAlike;
+    return least === undefined ? undefined : least - UNLIKE_MARGIN;
+  }
+
+  /**
+   * Whether this voice may be learned from a print of speech that is its own as far as the
+   * voice as recorded or learned tells (see `VoiceFilter.learn`): not once it is settled from
+   * one much less like it than its own lines have been (see LEARN_MARGIN). What the user asks
+   * for is learned from whatever its likeness (see `add`).
+   */
+  mayLearn(print: Float32Array): boolean {
+    const least = this.leastAlike;
+    return least === undefined || this.likeness(print) >= least - LEARN_MARGIN;
   }
 
   /**

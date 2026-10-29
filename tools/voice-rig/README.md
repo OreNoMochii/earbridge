@@ -37,6 +37,40 @@ talk report and the messages to `clips/<clip>.wav.run.jsonl`.
 
 Nothing generated is committed (see `.gitignore`), and the key is read from `.env` only.
 
+## Real voices
+
+The macOS voices are few and even. `clips/make_real_clips.py` builds the same kind of clips from recorded
+human voices, the 40 readers (20 men, 20 women) of LibriSpeech's `dev-clean` set (337 MB, from
+`https://www.openslr.org/resources/12/dev-clean.tar.gz`, unpacked anywhere outside the repo), with the lines
+of a set at one loudness (RMS 2000) and chatter made of six more readers' sentences:
+
+```sh
+venv/bin/python -I clips/make_real_clips.py <LibriSpeech/dev-clean folder> --me 251 --other 5694 --late [--earphone]
+node run.mts clips/real-late-251-5694-clean.wav
+```
+
+That writes `clips/real-late-251-5694-{clean,snr10,snr5,snr0}.wav`, the truth, and `real-late-251-5694-recording.wav`,
+"my" recording made of three other sentences of reader 251 (20 s), which `run.mts` uses in place of the
+stand-in for any clip set that has one. `--late` and `--earphone` mean what they do for `make_clips.py`;
+the earphone channel itself is `clips/channel.py`, shared by both makers. Readers are chosen by number:
+each reader's own lines are 0.61-0.93 like their recording, and the nearest other reader of the same
+gender gets 0.41-0.45 (men) or up to 0.52 (women) like it, so a man's "1 in 100" stranger over SAME_VOICE
+is a certainty among twenty: 251 vs 5694 (an even voice, 0.85 like its own recording at the least, against
+its nearest, 0.44), 5694 vs 251 (an uneven one, 0.66), 5536 vs 777 (0.45), 1272 vs 2412 (a woman: the easy case).
+
+Measured on these (my words kept / the other reader's words let through, with the parts): without the earphone
+channel the voice here tells the two readers apart as it does the macOS voices, 0.65-0.95 like my own lines
+against 0.12-0.54 for his once it is settled (over 0.45 only in 5 dB of chatter), and what leaks is his whole lines that happen to be 0.42-0.45
+like my recording (the "clearly mine" bar), his words said over mine that the recognizer labels as one talker's,
+and short parts of 1-2 s whose prints reach 0.4 by chance. Such a line, once learned from as mine, dragged my voice
+here his way and lowered the bar from 0.48 to 0.30 for the rest of the talk; since LEARN_MARGIN (`shared/pipeline/voices.ts`)
+a settled voice here is not learned from a line much less like it than my own lines have been, which brought his
+leaked words from 13 to 10 of 30 (251 vs 5694) and from 12 to 8 of 40 (5536 vs 777) without chatter, mine unchanged
+(79-81 of 78, 98 of 95), and changed nothing in chatter or on the macOS voices. Through the earphone channel his lines come to
+0.52-0.67 like my voice here while my own range from 0.41 to 0.91, so no bar on this measure separates them:
+251 vs 5694 lets 11 of his 30 words through without chatter, 5536 vs 777 23 of 40, and in chatter the
+recognizer drops most of my lines before any voice check (15-21 of my 75-95 words kept at 5 dB).
+
 ## Reading real talks
 
 Test builds of the app (made with `EXPO_PUBLIC_TALK_REPORT=1`) keep a report of each talk on

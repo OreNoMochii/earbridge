@@ -175,6 +175,8 @@ const VOICES: Record<number, number[]> = {
   18000: [0.25, 0.8818, 0.4],
   19000: [0.15, 0.9247, 0.35],
   20000: [0.3, 0.75, 0.589],
+  21000: [0.45, 0.7, 0.5545],
+  22000: [0.7, 0.1, 0.7071],
 };
 const printer = {
   mine: new Float32Array(VOICES[1000]!),
@@ -572,6 +574,36 @@ describe('voices', () => {
     const fresh = new VoiceFilter(printer);
     assert.equal(fresh.admits('me', print(7000), 2, true), true);
     assert.deepEqual(doubt(fresh, 18000), [undefined, false, false]);
+  });
+
+  it('learns my voice here from no line much less like it than my own lines have been, once it is settled', () => {
+    const learned = (voices: VoiceFilter) => voices.myVoiceHere!.likenesses!.map((value) => Number(value.toFixed(2)));
+    const bars = (voices: VoiceFilter) => [voices.describe(print(21000)).unlikeMineBelow, Number(voices.describe(print(21000)).doubtMineBelow?.toFixed(2))];
+    const voices = new VoiceFilter(printer);
+    for (let i = 0; i < 3; i++) assert.equal(voices.admits('me', print(7000), 2, true), true); // me, as heard here, each line alike
+    assert.deepEqual([learned(voices), bars(voices)], [[1, 1], [0.4, 0.75]]);
+    // Someone else, somewhat like my recording, as a voice of my own gender is now and then, and clearly like my voice
+    // here by that measure alone, yet far less so than my own lines: let through as clearly mine (in doubt, which the
+    // pieces of its sound may settle), but not learned from, which would drag my voice here his way and lower the bar.
+    assert.deepEqual([voices.isMine(print(21000)), voices.doubtful('me', print(21000)), voices.admits('me', print(21000), 2, true)], [true, true, true]);
+    assert.deepEqual([learned(voices), bars(voices)], [[1, 1], [0.4, 0.75]]);
+    // My own line, about as alike as my lines have been: learned from, as before.
+    assert.equal(voices.admits('me', print(22000), 2, true), true);
+    assert.deepEqual([learned(voices), bars(voices)], [[1, 1, 0.99], [0.4, 0.74]]);
+    // Asked for, a line is mine whatever its likeness, and learned from (see the test above).
+    voices.translated('me', print(21000), 2, true);
+    assert.deepEqual(learned(voices), [1, 1, 0.99, 0.73]);
+    // On a phone where each of my lines is only somewhat like my voice here, as on the user's: such a line is within
+    // what my own have been, and learned from.
+    const uneven = new VoiceFilter(printer);
+    assert.equal(uneven.useMyVoiceHere({ sum: print(7000), count: 3, likenesses: [0.5, 0.45] }), true);
+    assert.equal(uneven.admits('me', print(21000), 2, true), true);
+    assert.deepEqual(learned(uneven), [0.5, 0.45, 0.71]);
+    // Until my voice here is settled, it is learned from every line of mine.
+    const fresh = new VoiceFilter(printer);
+    assert.equal(fresh.admits('me', print(7000), 2, true), true);
+    assert.equal(fresh.admits('me', print(21000), 2, true), true);
+    assert.deepEqual(learned(fresh), [0.71]);
   });
 
   it('tells the gate whose voice a piece of sound is in, once the voices to keep out are known', () => {
