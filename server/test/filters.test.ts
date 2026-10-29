@@ -1888,6 +1888,86 @@ describe('one phone with a recognizer paid by the second', () => {
     assert.deepEqual([tenths(report!.heard), tenths(report!.sent)], [8, 7.3]);
   });
 
+  it('leaves out words said over mine in a voice unlike mine here, by the pieces the gate judged, when the recognizer heard one talker', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, of } = soloSetup({ voices: gatePrinter, metered: true, report: (entry) => entries.push(entry) });
+    solo.setTalkMode('hold');
+    solo.setSpeaker('me');
+    // The gate opens on the first piece of sound, which is in my voice, from its start: the recognizer's clock is the conversation's.
+    const word = (text: string, start: number, end = start + 0.4) => ({ text, start, end });
+    // Three lines in my voice as heard here settle it.
+    await hearIn(solo, 2, 7000);
+    for (let i = 1; i <= 3; i++) {
+      await hearIn(solo, 2, 7000);
+      stt.last.say('Yes.', ['en'], { start: i * 2, end: i * 2 + 2 });
+      await settle();
+    }
+    assert.deepEqual(of('utterance').map((m) => m.text), ['Yes.', 'Yes.', 'Yes.']);
+
+    // Someone somewhat like my recording, but unlike my voice here, talks over me: the gate lets them through, and the recognizer hears one talker.
+    await hearIn(solo, 2.5, 7000); // 8–10.5 s: me
+    await hearIn(solo, 2, 10000); // 10.5–12.5 s: someone else
+    await hearIn(solo, 2, 7000); // 12.5–14.5 s: me
+    stt.last.say('Hello there friend. Hey you listen now. Where is it?', Array(10).fill('en'), {
+      start: 8.2,
+      end: 14,
+      words: [
+        word('Hello', 8.2),
+        word('there', 8.8),
+        word('friend.', 9.6),
+        word('Hey', 10.6),
+        word('you', 11.1),
+        word('listen', 11.6),
+        word('now.', 12.1, 12.4),
+        word('Where', 12.6),
+        word('is', 13.1),
+        word('it?', 13.6),
+      ],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(3), ['Hello there friend. Where is it?']);
+    assert.deepEqual(
+      of('skipped').map((m) => [m.id, m.reason]),
+      [['u5', 'voice']],
+    );
+    // A few words of theirs, too short to judge by their own sound: by the pieces over them.
+    await hearIn(solo, 2, 7000); // 14.5–16.5 s: me
+    await hearIn(solo, 1.4, 10000); // 16.5–17.9 s: someone else
+    await hearIn(solo, 2, 7000); // 17.9–19.9 s: me
+    stt.last.say('So friend. Hey you two. Where now?', Array(7).fill('en'), {
+      start: 14.7,
+      end: 19,
+      words: [word('So', 14.7), word('friend.', 16.0), word('Hey', 16.6), word('you', 17.1), word('two.', 17.6, 17.8), word('Where', 18.0), word('now?', 18.6)],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(4), ['So friend. Where now?']);
+    assert.deepEqual(
+      of('skipped').map((m) => [m.id, m.reason]),
+      [
+        ['u5', 'voice'],
+        ['u7', 'voice'],
+      ],
+    );
+    solo.accept('u5');
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(5), ['Hey you listen now.'], 'what was left out can still be asked for');
+    assert.deepEqual(
+      entries.filter((e) => e.type === 'parts').map((e) => e.type === 'parts' && e.parts.map((part) => [part.text, part.kept, part.apart ?? false, part.id, part.voice !== undefined])),
+      [
+        [
+          ['Hello there friend. Where is it?', true, false, undefined, true],
+          ['Hey you listen now.', false, true, 'u5', true],
+        ],
+        [
+          ['So friend. Where now?', true, false, undefined, true],
+          ['Hey you two.', false, true, 'u7', false],
+        ],
+      ],
+    );
+    const line = entries.find((e) => e.type === 'line' && e.id === 'u4');
+    assert.equal(line && line.type === 'line' && line.kept, 'Hello there friend. Where is it?');
+  });
+
   it('sends on what was heard but not judged yet when a turn ends, so that no short line is lost', async () => {
     const { solo, stt, of } = soloSetup({ voices: gatePrinter, metered: true });
     solo.setTalkMode('hold');

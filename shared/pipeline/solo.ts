@@ -164,18 +164,31 @@ interface Stretch {
   end: number;
 }
 
-/** A line's words by turns, as the recognizer told its talkers apart (see `SttWord.speaker`). */
-function stretchesOf(words: readonly SttWord[]): Stretch[] {
+/**
+ * A line's words by turns, as the recognizer told its talkers apart (see `SttWord.speaker`),
+ * or cut wherever `apart` says two words in a row are not one turn's.
+ */
+function stretchesOf(words: readonly SttWord[], apart = (a: SttWord, b: SttWord) => a.speaker !== b.speaker): Stretch[] {
   const stretches: Stretch[] = [];
   for (const word of words) {
     const last = stretches.at(-1);
-    if (last && last.speaker === word.speaker) {
+    if (last && !apart(last.words.at(-1)!, word)) {
       last.words.push(word);
       last.end = Math.max(last.end, word.end);
-    } else stretches.push({ speaker: word.speaker!, words: [word], start: word.start, end: word.end });
+    } else stretches.push({ speaker: word.speaker ?? '', words: [word], start: word.start, end: word.end });
   }
   return stretches;
 }
+
+/** A piece of sound the gate judged on its way to the recognizer (see `judgeSound`), with its voice print. */
+interface GatePiece {
+  /** On the conversation's clock. */
+  start: number;
+  end: number;
+  print: Float32Array;
+}
+/** Pieces the gate judged are kept this long, for lines still to be judged (see `splitBySound`). */
+const GATE_PIECES_SECONDS = 60;
 
 /** Seconds of audio around the recognized words that count as theirs. */
 const PADDING = 0.1;
@@ -276,6 +289,8 @@ export class SoloConversation {
   private clock: StreamClock | undefined;
   /** What the gate measured of the piece of sound it is judging, for the talk report. */
   private gateMeasured: { level: number; voice?: VoiceLikeness } | undefined;
+  /** The latest pieces of sound the gate judged, with their voice prints (see `splitBySound`). */
+  private gatePieces: GatePiece[] = [];
   /** Pieces of silence the gate judged in a row, told to the talk report as one. */
   private quietRun: { start: number; end: number; open: boolean } | undefined;
   private readonly skipped = new Map<string, Skipped>();
@@ -759,7 +774,10 @@ export class SoloConversation {
     // for them, which it is learned from.
     const voices = this.voices;
     // Two or more talkers in it, as far as the recognizer can tell: only what is in our voices, once part of it clearly is.
-    const parts = voices && voice && details.words ? await this.judgeParts(speakerId, details.words, heard.clock, held) : undefined;
+    const parts =
+      voices && voice && details.words
+        ? ((await this.judgeParts(speakerId, details.words, heard.clock, held)) ?? (await this.splitBySound(speakerId, details.words, heard.clock, held)))
+        : undefined;
     if (this.closed) return;
     if (parts) {
       const words = details.words!;
@@ -955,6 +973,67 @@ export class SoloConversation {
     return [...parts.filter((part) => part.words.length > 0), ...apart];
   }
 
+  /**
+   * Whose words a line's are, by the voice of each piece of its sound as the gate judged
+   * them on the way to the recognizer (see `judgeSound`), when the recognizer heard one
+   * talker in it: someone else's words said over ours land in our line then, as one
+   * talker's. Once our voice as settled here is known well enough to tell (see
+   * `VoiceFilter.unlike`), a word most of whose pieces are clearly not in it is someone
+   * else's; each such run of words is left out on its own, judged again by its own sound
+   * when there is enough of it to tell (see MIN_LEARN_SECONDS), else by the pieces over
+   * it; the rest is the line, judged as one (see `VoiceFilter.admits`). Nothing without
+   * such a run, or when the rest is not ours after all: the line is then judged as a whole.
+   */
+  private async splitBySound(speakerId: SoloSpeaker, words: readonly SttWord[], clock: StreamClock, vouched: boolean): Promise<Part[] | undefined> {
+    const voices = this.voices;
+    if (!voices || !this.audio || !voices.checks(speakerId) || this.gatePieces.length === 0) return undefined;
+    const unlike = (print: Float32Array) => voices.unlike(speakerId, print) && !voices.recognizes(print, speakerId);
+    /** How many more of the gate's pieces over a span of the conversation, or at an instant, are in a voice unlike ours than not. */
+    const against = (from: number, to = from) => {
+      let count = 0;
+      for (const piece of this.gatePieces) {
+        const over = from < to ? piece.start < to && piece.end > from : piece.start <= from && from < piece.end;
+        if (over) count += unlike(piece.print) ? 1 : -1;
+      }
+      return count;
+    };
+    const taken = new Set<SttWord>();
+    for (const word of words) {
+      if (against((clock.toConversation(word.start) + clock.toConversation(word.end, true)) / 2) > 0) taken.add(word);
+    }
+    if (taken.size === 0) return undefined;
+    const cut = (a: SttWord, b: SttWord) => taken.has(a) !== taken.has(b);
+    const apart: Part[] = [];
+    for (const stretch of stretchesOf(words, cut)) {
+      if (!taken.has(stretch.words[0]!)) continue;
+      const samples = this.soundOf([stretch], clock);
+      const seconds = samples.length / AUDIO_SAMPLE_RATE;
+      let print: Float32Array | undefined;
+      if (seconds >= MIN_LEARN_SECONDS) {
+        print = await voices.printOf(samples);
+        if (this.closed) return undefined;
+      }
+      const theirs = print ? unlike(print) : against(clock.toConversation(stretch.start), clock.toConversation(stretch.end, true)) > 0;
+      if (!theirs) {
+        for (const word of stretch.words) taken.delete(word);
+        continue;
+      }
+      apart.push({ speaker: stretch.speaker, words: stretch.words, samples, seconds, ...(print && { print, ...(this.options.report && { likeness: voices.describe(print) }) }), kept: false, apart: true });
+    }
+    if (apart.length === 0) return undefined;
+    const rest = stretchesOf(words, cut).filter((stretch) => !taken.has(stretch.words[0]!));
+    const ours = rest.flatMap((stretch) => stretch.words);
+    if (ours.length === 0) return undefined;
+    const samples = this.soundOf(rest, clock);
+    const seconds = samples.length / AUDIO_SAMPLE_RATE;
+    const print = await voices.printOf(samples);
+    if (this.closed) return undefined;
+    if (!print) return undefined;
+    const likeness = this.options.report ? voices.describe(print) : undefined;
+    if (!voices.admits(speakerId, print, seconds, vouched)) return undefined;
+    return [{ speaker: rest[0]!.speaker, words: ours, samples, seconds, print, ...(likeness && { likeness }), kept: true }, ...apart];
+  }
+
   /** Notes in the talk report how a line in two or more voices was judged (see `judgeParts`). */
   private reportParts(id: string, parts: readonly Part[], line: string, words: number): void {
     this.options.report?.({
@@ -1063,6 +1142,8 @@ export class SoloConversation {
     if (this.recording) return 'maybe';
     const print = await this.voices!.printOf(samples);
     if (!print || this.closed) return 'maybe';
+    this.gatePieces.push({ start: window.start, end: window.end, print });
+    while (this.gatePieces[0]!.end < window.end - GATE_PIECES_SECONDS) this.gatePieces.shift();
     if (this.options.report) this.gateMeasured = { level, voice: this.voices!.describe(print) };
     const sides = this.selection === 'auto' ? [SOLO_ME, SOLO_THEM] : [this.selection];
     return this.voices!.judge(sides, print);
