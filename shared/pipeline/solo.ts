@@ -189,6 +189,15 @@ interface GatePiece {
 }
 /** Pieces the gate judged are kept this long, for lines still to be judged (see `splitBySound`). */
 const GATE_PIECES_SECONDS = 60;
+/** A run of words taken for someone else's, with its sound and voice print. */
+interface Run { stretch: Stretch; samples: Int16Array; seconds: number; print: Float32Array; }
+/** How many words at most are given back at each end of such a run (see `coreOf`). */
+const MAX_TRIMMED_WORDS = 3;
+/**
+ * How much less like the voice the rest of a run must be than the run, to be its core: the
+ * prints of two stretches of one voice differ by a few hundredths by chance.
+ */
+const TRIM_MARGIN = 0.05;
 
 /** Seconds of audio around the recognized words that count as theirs. */
 const PADDING = 0.1;
@@ -796,7 +805,7 @@ export class SoloConversation {
         const partText = textOf(part.words, text, words.length);
         this.skip(part.id, { speakerId, lang, text: partText, reason: 'voice', level: speechLevel(part.samples), heading, voice: partVoice, margin, held, part: true });
       }
-      this.reportParts(id, parts, text, words.length);
+      this.reportParts(id, parts, text, words.length, heard.clock);
       return;
     }
     if (voices && !(voice ? voices.admits(speakerId, voice.print, voice.seconds, held) : !voices.checks(speakerId))) {
@@ -999,6 +1008,36 @@ export class SoloConversation {
   }
 
   /**
+   * The core of a run of words taken for someone else's by the pieces the gate judged: those
+   * are as long as a piece, so where the run meets our words its end is off by a word or so,
+   * and ours there would be lost. Words are dropped from such an end, a few at most, for
+   * whichever rest long enough to tell (see MIN_LEARN_SECONDS) is clearly less like that
+   * side's voice here (see TRIM_MARGIN); the dropped words are the line's again. An end at
+   * the line's edge is left alone: words given back there would stand on their own, and a
+   * stranger's line judged whole is skipped, while its least likely words might pass.
+   */
+  private async coreOf(speakerId: SoloSpeaker, run: Run, ends: { start: boolean; end: boolean }, clock: StreamClock): Promise<Run> {
+    const voices = this.voices!;
+    let best = { ...run, likeness: voices.likenessHere(speakerId, run.print) };
+    for (const fromStart of [true, false]) {
+      if (!(fromStart ? ends.start : ends.end)) continue;
+      let words = best.stretch.words;
+      for (let dropped = 1; dropped <= MAX_TRIMMED_WORDS && words.length > 1; dropped++) {
+        words = fromStart ? words.slice(1) : words.slice(0, -1);
+        const stretch = stretchesOf(words, () => false)[0]!;
+        const samples = this.soundOf([stretch], clock);
+        const seconds = samples.length / AUDIO_SAMPLE_RATE;
+        if (seconds < MIN_LEARN_SECONDS) break;
+        const print = await voices.printOf(samples);
+        if (this.closed || !print) break;
+        const likeness = voices.likenessHere(speakerId, print);
+        if (likeness < best.likeness - TRIM_MARGIN) best = { stretch, samples, seconds, print, likeness };
+      }
+    }
+    return best;
+  }
+
+  /**
    * Whose words a line's are, by the voice of each piece of its sound as the gate judged
    * them on the way to the recognizer (see `judgeSound`), when the recognizer heard one
    * talker in it: someone else's words said over ours land in our line then, as one
@@ -1032,7 +1071,11 @@ export class SoloConversation {
         for (const word of stretch.words) taken.delete(word);
         continue;
       }
-      apart.push({ speaker: stretch.speaker, words: stretch.words, samples, seconds, ...(print && { print, ...(this.options.report && { likeness: voices.describe(print) }) }), kept: false, apart: true });
+      const ends = { start: stretch.words[0] !== words[0], end: stretch.words[stretch.words.length - 1] !== words[words.length - 1] };
+      const run = print ? await this.coreOf(speakerId, { stretch, samples, seconds, print }, ends, clock) : { stretch, samples, seconds, print };
+      if (this.closed) return undefined;
+      for (const word of stretch.words) if (!run.stretch.words.includes(word)) taken.delete(word);
+      apart.push({ speaker: run.stretch.speaker, words: run.stretch.words, samples: run.samples, seconds: run.seconds, ...(run.print && { print: run.print, ...(this.options.report && { likeness: voices.describe(run.print) }) }), kept: false, apart: true });
     }
     if (apart.length === 0) return undefined;
     const rest = stretchesOf(words, cut).filter((stretch) => !taken.has(stretch.words[0]!));
@@ -1049,7 +1092,7 @@ export class SoloConversation {
   }
 
   /** Notes in the talk report how a line in two or more voices was judged (see `judgeParts`). */
-  private reportParts(id: string, parts: readonly Part[], line: string, words: number): void {
+  private reportParts(id: string, parts: readonly Part[], line: string, words: number, clock: StreamClock): void {
     this.options.report?.({
       type: 'parts',
       id,
@@ -1057,6 +1100,7 @@ export class SoloConversation {
         speaker: part.speaker,
         text: textOf(part.words, line, words),
         seconds: part.seconds,
+        starts: part.words.map((word) => clock.toConversation(word.start)),
         ...(part.likeness && { voice: part.likeness }),
         kept: part.kept,
         ...(part.id !== undefined && { id: part.id }),

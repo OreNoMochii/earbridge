@@ -139,12 +139,12 @@ for (const line of entries.filter((e) => e.type === 'line')) {
   if (!line.words) continue;
   // As the whole line would have been judged (held for me: somewhat like my recording, or like my voice here).
   const wholeAdmitted = (v.mine ?? -1) >= 0.2 || (v.mineHere ?? -1) >= 0.4;
-  const keptLabels = new Set((parts ?? []).filter((p: any) => p.kept).map((p: any) => p.speaker));
+  const keptStarts = new Set((parts ?? []).filter((p: any) => p.kept).flatMap((p: any) => p.starts as number[]));
   for (const word of line.words) {
     const t = who(word.start, word.end) as 'me' | 'other' | undefined;
     if (!t) continue;
     if (wholeAdmitted) before[t]++;
-    const keptNow = line.outcome === 'translated' && (!parts || keptLabels.has(word.speaker));
+    const keptNow = line.outcome === 'translated' && (!parts || keptStarts.has(word.start));
     if (keptNow) after[t]++;
   }
 }

@@ -82,6 +82,8 @@ export type TalkReportEntry =
         id?: string;
         /** A stretch of words judged apart from the rest of its talker's, by its own voice. */
         apart?: true;
+        /** When each of its words starts, on the conversation's clock like the line's `words`. */
+        starts: number[];
       }>;
     }
   | { type: 'translation'; id: string; text: string }

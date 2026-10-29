@@ -180,6 +180,22 @@ const printer = {
   },
 };
 /** Like `printer`, but a piece of sound is in the voice heard most in it, silence not counting: for pieces the gate judges as they come. */
+/**
+ * Prints the blend of the voices heard, each by how much of the sound is in it, as a real
+ * printer does over two voices: a stretch of one voice under another prints between them.
+ */
+const blendPrinter = {
+  mine: new Float32Array(VOICES[3000]!),
+  print: async (samples: Int16Array) => {
+    const heard = new Map<number, number>();
+    for (const value of samples) if (value !== 0) heard.set(value, (heard.get(value) ?? 0) + 1);
+    const sum = [0, 0, 0];
+    for (const [value, count] of heard) for (let i = 0; i < 3; i++) sum[i]! += VOICES[value]![i]! * count;
+    const norm = Math.hypot(...sum);
+    return norm > 0 ? new Float32Array(sum.map((x) => x / norm)) : undefined;
+  },
+};
+
 const gatePrinter = {
   mine: printer.mine,
   print: async (samples: Int16Array) => {
@@ -2061,6 +2077,80 @@ describe('one phone with a recognizer paid by the second', () => {
         [
           ['So.', true, undefined],
           ['Where is it?', true, undefined],
+        ],
+      ],
+    );
+  });
+
+  it('gives back my words at the edge of a run taken for someone else, which the pieces the gate judged are too coarse to tell', async () => {
+    const entries: TalkReportEntry[] = [];
+    const { solo, stt, of } = soloSetup({ voices: blendPrinter, metered: true, report: (entry) => entries.push(entry) });
+    solo.setTalkMode('hold');
+    solo.setSpeaker('me');
+    const word = (text: string, start: number, end = start + 0.4) => ({ text, start, end, speaker: '0' });
+    // Three lines in my voice as heard here settle it.
+    await hearIn(solo, 2, 7000);
+    for (let i = 1; i <= 3; i++) {
+      await hearIn(solo, 2, 7000);
+      stt.last.say('Yes.', ['en'], { start: i * 2, end: i * 2 + 2 });
+      await settle();
+    }
+    assert.deepEqual(of('utterance').map((m) => m.text), ['Yes.', 'Yes.', 'Yes.']);
+
+    // Someone loud starts over my last two words, so the pieces over those are unlike my voice too;
+    // but the run taken is least like my voice without them.
+    await hearIn(solo, 2, 7000); // 8–10 s: me
+    await hearIn(solo, 1, 10000); // 10–11 s: me, under someone else
+    await hearIn(solo, 1.6, 6000); // 11–12.6 s: someone else (short enough for the gate to send it all on)
+    await hearIn(solo, 2.4, 7000); // 12.6–15 s: me
+    stt.last.say('Hello there friend. Listen up. Did you hear what happened? Thanks.', Array(11).fill('en'), {
+      start: 8.2,
+      end: 13.7,
+      words: [
+        word('Hello', 8.2),
+        word('there', 8.7),
+        word('friend.', 9.2, 9.8),
+        word('Listen', 10.1, 10.4),
+        word('up.', 10.5, 10.9),
+        word('Did', 11.1, 11.3),
+        word('you', 11.35, 11.55),
+        word('hear', 11.6, 11.8),
+        word('what', 11.85, 12.1),
+        word('happened?', 12.15, 12.5),
+        word('Thanks.', 13.2, 13.7),
+      ],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(3), ['Hello there friend. Listen up. Thanks.']);
+    assert.deepEqual(
+      of('skipped').map((m) => [m.id, m.reason]),
+      [['u5', 'voice']],
+    );
+
+    // The run ends the line, its last word in a voice between: that end is not for trimming,
+    // as the word would be given back to no words of mine.
+    await hearIn(solo, 1, 7000); // 15–16 s: me
+    await hearIn(solo, 1.6, 6000); // 16–17.6 s: someone else
+    await hearIn(solo, 0.6, 10000); // 17.6–18.2 s: someone else, under me
+    await hearIn(solo, 1.8, 7000); // 18.2–20 s: me
+    stt.last.say('So friend. Did you hear what? Sure.', Array(7).fill('en'), {
+      start: 15.2,
+      end: 18.1,
+      words: [word('So', 15.2, 15.5), word('friend.', 15.6, 15.9), word('Did', 16.1, 16.3), word('you', 16.35, 16.55), word('hear', 16.6, 16.8), word('what?', 16.85, 17.4), word('Sure.', 17.7, 18.1)],
+    });
+    await settle();
+    assert.deepEqual(of('utterance').map((m) => m.text).slice(4), ['So friend.']);
+    assert.deepEqual(of('skipped').map((m) => [m.id, m.reason]).slice(1), [['u7', 'voice']]);
+    assert.deepEqual(
+      entries.filter((e) => e.type === 'parts').map((e) => e.type === 'parts' && e.parts.map((part) => [part.text, part.kept, part.id])),
+      [
+        [
+          ['Hello there friend. Listen up. Thanks.', true, undefined],
+          ['Did you hear what happened?', false, 'u5'],
+        ],
+        [
+          ['So friend.', true, undefined],
+          ['Did you hear what? Sure.', false, 'u7'],
         ],
       ],
     );
