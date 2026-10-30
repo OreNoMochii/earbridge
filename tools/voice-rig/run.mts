@@ -95,11 +95,22 @@ const holder = (at: number): 'me' | 'them' => (heldForThem.some((line) => at >= 
 const messages: any[] = [];
 const entries: any[] = [];
 let ids = 0;
+// What the recognizer sent back, raw, with when it came on the clip's clock: for looking into
+// what became of some words (written to <clip>.deepgram.run.jsonl).
+const heardBack: string[] = [];
+const loggedSocket: typeof openDeepgramSocket = (url, key, events) =>
+  openDeepgramSocket(url, key, {
+    ...events,
+    message: (text) => {
+      heardBack.push(JSON.stringify({ at: Number(((Date.now() - started) / 1000).toFixed(2)), ...JSON.parse(text) }));
+      events.message(text);
+    },
+  });
 const solo = new SoloConversation({
   myLang: 'en-US',
   theirLang: 'en-US', // the other talker reads English too: the stream for "Them" is opened in their language
   voiceLangs: [],
-  stt: new DeepgramProvider({ apiKey, model: 'nova-3', fallbackModel: 'nova-2', openSocket: openDeepgramSocket, keyHint: 'key' }),
+  stt: new DeepgramProvider({ apiKey, model: 'nova-3', fallbackModel: 'nova-2', openSocket: loggedSocket, keyHint: 'key' }),
   translator: new FakeTranslator(),
   synthesizer: undefined,
   send: (message) => messages.push({ t: Date.now(), ...message }),
@@ -150,6 +161,7 @@ python.stdin.end();
 
 const out = `${clip}.run.jsonl`;
 writeFileSync(out, [...entries.map((e) => JSON.stringify({ kind: 'report', ...e })), ...messages.map((m) => JSON.stringify({ kind: 'message', ...m }))].join('\n') + '\n');
+writeFileSync(`${clip}.deepgram.run.jsonl`, heardBack.join('\n') + '\n');
 
 // ---- Scoring against the truth.
 const who = (s: number, e: number) => {

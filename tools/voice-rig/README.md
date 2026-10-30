@@ -199,6 +199,84 @@ voice here, under its 0.5 floor); in chatter at 10 dB the two let through the sa
 counts from run to run: the Fred clip's 19 words let through here were 1 in the runs of 2026-10-29 and early
 2026-10-30 under the same rules, his line being 0.43 like my voice here against a bar of 0.40.
 
+### Words the recognizer gives and takes back (2026-10-30)
+
+`node run.mts` now keeps what the recognizer sent back, raw, next to the clip (`<clip>.wav.deepgram.run.jsonl`,
+every message with `at`, the clip's clock). `python3 -I deepgram_log.py count <logs...>` counts the final results
+with nothing in them, and those among them whose interim results had words; `filled <logs...>` prints each of
+those with the words kept from the interim results; `list <log> [from to]` prints the final results and the
+interim results with text in order between two clip times.
+
+Read for the earphone 5694-251 set at 10 dB, where my words had fallen from 46 to 39 of 75 between two runs of
+the same rules, the log showed a final result with no words at all where the interim results before it, for the
+same stretch of the connection's audio, had many: 47.7-51.4 s of the clip, interim "and ugly old day, the order
+was given for the whole army crew." (13 words; the line reads "and still day the order was given for the whole
+army to advance"), then an interim with nothing, then the final with nothing; their second held line, 22.8-26.8 s,
+interim "There will be only a period of no groups of family." (11 words of "there was the old imperious note in
+his failing whisper"), then nothing, then the final sent for CloseStream with nothing; and 52.7-56.3 s, interims
+"for attack the medians" and "Point of", final nothing. The same stretches every run. The other final results
+with nothing (9-18 s, my second and third lines) had no words in their interim results either: plain
+recognition failure at 10 dB through the channel, which nothing on this side mends. So part of what the rules
+were being measured on was the recognizer giving words and taking them back, which is also what the user sees
+as words in the live caption that vanish. Over the five `--turns` sets (clean, 10 dB, 5 dB), 14 of the 246
+final results with nothing, of 415, had words in their interim results, 65 words in all.
+
+The client (`shared/pipeline/stt/deepgram.ts`) now remembers the latest interim result with words for a stretch
+(by its `start`) and, when the final result for that stretch has no text and no words, keeps the interim's
+words as heard, those that end within the final result's stretch: the interim result that was last to have
+words can run past where the final pass cut the stretch, and the words past that point come again in the next
+stretch ("Point of" at 21.3-21.8 s of the connection, past a final result ending at 20.85 s, and "point of
+contact, inquired the other," right after it; kept whole, the first try translated "Point of point of contact").
+Whose voice said them is judged further on, as for any words: in one run the recovered line on that clip was
+split and "point of contact, inquired the other," left out as not my voice; in another the split kept most of it.
+Over the five sets, single runs, the committed rules → with the words kept (with the split):
+
+| clip | my words | theirs leaked under my button | their held words |
+| --- | --- | --- | --- |
+| 251-5694 clean | 81 → 81 of 78 | 0 → 0 of 30 | 30 → 30 of 30 |
+| 251-5694 10 dB | 79 → 79 of 78 | 1 → 1 of 30 | 30 → 30 of 30 |
+| 251-5694 5 dB | 62 → 64 of 78 | 0 → 1 of 30 | 30 → 30 of 30 |
+| 5536-777 clean | 89 → 89 of 95 | 0 → 0 of 40 | 41 → 41 of 41 |
+| 5536-777 10 dB | 92 → 92 of 95 | 0 → 0 of 40 | 41 → 41 of 41 |
+| 5536-777 5 dB | 77 → 87 of 95 | 0 → 0 of 40 | 42 → 42 of 41 |
+| earphone 251-5694 clean | 82 → 82 of 78 | 6 → 6 of 30 | 20 → 20 of 30 |
+| earphone 251-5694 10 dB | 54 → 56 of 78 | 14 → 14 of 30 | 19 → 19 of 30 |
+| earphone 251-5694 5 dB | 21 → 27 of 78 | 0 → 4 of 30 | 6 → 6 of 30 |
+| earphone 5536-777 clean | 70 → 70 of 95 | 0 → 0 of 40 | 30 → 30 of 41 |
+| earphone 5536-777 10 dB | 42 → 49 of 95 | 0 → 0 of 40 | 22 → 22 of 41 |
+| earphone 5536-777 5 dB | 6 → 12 of 95 | 4 → 4 of 40 | 0 → 0 of 41 |
+| earphone 5694-251 clean | 62 → 62 of 75 | 0 → 0 of 29 | 29 → 29 of 28 |
+| earphone 5694-251 10 dB | 46 → 60 of 75 | 5 → 5 of 29 | 15 → 26 of 28 |
+| earphone 5694-251 5 dB | 15 → 15 of 75 | 0 → 0 of 29 | 0 → 0 of 28 |
+| all | 878 → 925 of 1263 | 30 → 35 of 507 | 355 → 366 of 510 |
+
+What the words kept are joined to is the recognizer's choice, as for any words: it ends a line (UtteranceEnd) by
+the last word it counted, so one may still come for the words before the stretch it emptied, and nothing ends
+the words kept themselves; they wait in the segmenter for the next result that ends a line, in the app at the
+latest until the button is let go. On the rig, where my button stays held over a whole stretch of lines, two
+recovered pieces 16 s apart ("And turned back into the arabesque", mine, and "It's about daylight on", theirs)
+came out 29 s later as one 15.4 s line judged mine as a whole, 4 of the 5 words leaked more above. Making the
+words kept end their line at once was tried: mine 925 → 920 of 1263, theirs leaked 35 → 38 of 507, their held
+366 → 366. The pieces judged alone are a second or two long and their prints the noisier for it: "And turned
+back into the arabesque" alone (2.2 s) was skipped as 0.33 like my voice here, "It's about daylight on" alone
+(1.1 s) passed at 0.42, "Beautiful to attack a median" alone was skipped at 0.39 and the "Point of contact,
+inquired the other." after it passed on its own. The join had been doing the voice check as much good as harm.
+Dropped.
+
+A gate change tried with it: once their voice is known, a window for me alone that is like neither voice (under
+0.2 like their recording and under 0.4 like their voice here) passes as 'maybe' rather than 'other', so that
+the gate does not close on my own voice changed by the noise around beyond my bars (a tenth of my own pieces
+through earphones on the rig), and the words are judged as a whole line. Alone, against the committed rules,
+single runs: mine 878 → 873 of 1263, theirs leaked 30 → 25 of 507, their held 355 → 376 of 510 (the whole of
+the last from earphone 5536-777 at 5 dB, 0 → 21, not through the changed path: run-to-run variation), per clip
+within the variation between runs; at the gate on the clean-microphone runs 305 of 306 of my windows passed
+and 20 of 109 of theirs, sorted out by the line rules. With the words kept: mine 925 → 928, theirs leaked
+35 → 37, their held 366 → 396 (again the two earphone 5 dB clips, 6 → 15 and 0 → 21). On the earphone 5694-251
+set at 5 dB their "I tell you, it is not poison, she cried", said under my button, went through the gate and,
+joined under my label into a 20.6 s line 0.69 like my voice here, was translated: 0 → 9 of 29 leaked; at 10 dB
+mine 60 → 52 with 5 → 0 leaked. A wash on my words, and the leak up where it matters most. Dropped: the gate
+keeps closing on a window for me alone that is unlike my voice here.
+
 ## Reading real talks
 
 Test builds of the app (made with `EXPO_PUBLIC_TALK_REPORT=1`) keep a report of each talk on

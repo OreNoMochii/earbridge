@@ -11,6 +11,8 @@ const BYTES_PER_SECOND = AUDIO_SAMPLE_RATE * 2;
 const MAX_BUFFERED_BYTES = BYTES_PER_SECOND * 10; // 10 s of audio while (re)connecting
 const MAX_RECONNECTS = 5;
 const CLOSE_GRACE_MS = 3_000;
+/** A word ending this little past the end of a final result's stretch still counts as within it (times are rounded). */
+const STRETCH_SLACK_SECONDS = 0.05;
 
 /** What a socket reports. After `rejected` or `closed` it reports nothing more. */
 export interface DeepgramSocketEvents {
@@ -68,8 +70,18 @@ interface DeepgramWord {
   speaker?: number;
 }
 
+/** What a result said: its text, words and languages. */
+interface DeepgramHeard {
+  text: string;
+  words: DeepgramWord[];
+  languages?: string[];
+}
+
 interface DeepgramMessage {
   type?: string;
+  /** Where the stretch of audio this result is for starts, in seconds of the connection's audio, and how long it is. */
+  start?: number;
+  duration?: number;
   is_final?: boolean;
   speech_final?: boolean;
   from_finalize?: boolean;
@@ -99,6 +111,8 @@ class DeepgramStream implements SttStream {
   private connections = 0;
   private closing = false;
   private finished = false;
+  /** The latest interim result with words, and where the stretch it is for starts (see `handleMessage`). */
+  private interim: { start: number; heard: DeepgramHeard } | undefined;
   private keepAliveTimer: ReturnType<typeof setInterval> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private closeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -113,6 +127,7 @@ class DeepgramStream implements SttStream {
 
   connect(): void {
     this.connections += 1;
+    this.interim = undefined;
     if (this.reconnects === 0) this.events.onStatus('connecting'); // else scheduleReconnect reported it
     const socket: DeepgramSocket = this.options.openSocket(this.url(), this.options.apiKey, {
       open: () => {
@@ -235,21 +250,34 @@ class DeepgramStream implements SttStream {
 
     const alternative = message.channel?.alternatives?.[0];
     if (!alternative) return;
-    const text = alternative.transcript ?? '';
-    const words = alternative.words ?? [];
+    const isFinal = message.is_final === true;
+    let heard: DeepgramHeard = { text: alternative.transcript ?? '', words: alternative.words ?? [], languages: alternative.languages };
+    // A final result sometimes has nothing where the interim results before it, for the same
+    // stretch of audio, had words: speech in noise that someone else talked over, through
+    // earphones in a loud place (a dozen words of a line on the rig, their whole line at the
+    // end of a turn). The final pass took the stretch for no speech; the live one heard words in
+    // it, which are kept as heard. Whose voice said them is judged further on, as for any words,
+    // and they end their line as any others do (judged alone, on the rig, their short pieces lost
+    // as many of my words to the voice check as they kept of theirs out).
+    if (isFinal && !heard.text && heard.words.length === 0 && this.interim && this.interim.start === message.start) {
+      heard = withinStretch(this.interim.heard, message.start + (message.duration ?? Infinity));
+    }
+    if (isFinal) this.interim = undefined;
+    else if (heard.words.length > 0 && typeof message.start === 'number') this.interim = { start: message.start, heard };
+    const { text, words } = heard;
 
     let wordLanguages = words
       .map((word) => word.language)
       .filter((lang): lang is string => typeof lang === 'string')
       .map(baseLanguage);
-    const segmentLanguage = alternative.languages?.[0];
+    const segmentLanguage = heard.languages?.[0];
     if (wordLanguages.length === 0 && text && typeof segmentLanguage === 'string') {
       wordLanguages = [baseLanguage(segmentLanguage)];
     }
 
     const result: SttResult = {
       text,
-      isFinal: message.is_final === true,
+      isFinal,
       speechFinal: message.speech_final === true,
       fromFinalize: message.from_finalize === true,
       wordLanguages,
@@ -334,6 +362,19 @@ class DeepgramStream implements SttStream {
     clearTimeout(this.closeTimer);
     this.events.onClosed();
   }
+}
+
+/**
+ * The words of an interim result that end by `end`, with their text. The interim result that is
+ * last to have words for a stretch may run past where the final result for it ends, when the
+ * final pass cut the stretch short: the words past that point are heard again in the next
+ * stretch, so they are not kept twice.
+ */
+function withinStretch(heard: DeepgramHeard, end: number): DeepgramHeard {
+  const words = heard.words.filter((word) => isNumber(word.end) && word.end <= end + STRETCH_SLACK_SECONDS);
+  if (words.length === heard.words.length) return heard;
+  const text = words.map((word) => word.punctuated_word ?? word.word).filter((word): word is string => typeof word === 'string').join(' ');
+  return { text, words, languages: heard.languages };
 }
 
 function isNumber(value: unknown): value is number {

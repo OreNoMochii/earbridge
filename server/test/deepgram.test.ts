@@ -229,6 +229,47 @@ describe('Deepgram live transcription', () => {
     );
   });
 
+  it('keeps the words of the interim results where the final result for the same stretch has none', async () => {
+    const { events } = open('en-US', true);
+    await eventually(() => events.count('live'));
+    const { socket } = deepgram.connections[0]!;
+    const heard = [
+      { word: 'and', punctuated_word: 'and', start: 3.1, end: 3.3, speaker: 1 },
+      { word: 'the', punctuated_word: 'the', start: 3.4, end: 3.5, speaker: 1 },
+      { word: 'order', punctuated_word: 'order', start: 3.6, end: 4.0, speaker: 1 },
+      // Past where the final result's stretch ends (6.7): heard again in the next stretch.
+      { word: 'point', punctuated_word: 'Point', start: 6.8, end: 7.1, speaker: 1 },
+    ];
+    socket.send(JSON.stringify(results('and the', { is_final: false, start: 3.0, duration: 1.5 }, heard.slice(0, 2))));
+    socket.send(JSON.stringify(results('and the order Point', { is_final: false, start: 3.0, duration: 4.2 }, heard)));
+    // The live pass then gave the stretch up too, before the final pass found nothing in what the
+    // live one had heard three words in.
+    socket.send(JSON.stringify(results('', { is_final: false, start: 3.0, duration: 5.2 })));
+    socket.send(JSON.stringify(results('', { is_final: true, start: 3.0, duration: 3.7 })));
+    // The next stretch had nothing in the interim results either: nothing is made up.
+    socket.send(JSON.stringify(results('', { is_final: true, speech_final: true, start: 6.7, duration: 1.2 })));
+    await eventually(() => events.results.length === 5);
+    const recovered = events.results[3]!;
+    assert.equal(recovered.isFinal, true);
+    assert.equal(recovered.speechFinal, false, 'the words kept end their line as any others do');
+    assert.equal(recovered.text, 'and the order');
+    assert.deepEqual(
+      recovered.words?.map(({ text, start, end, speaker }) => [text, start, end, speaker]),
+      [
+        ['and', 3.1, 3.3, '1:1'],
+        ['the', 3.4, 3.5, '1:1'],
+        ['order', 3.6, 4.0, '1:1'],
+      ],
+    );
+    assert.equal(recovered.start, 3.1);
+    assert.equal(recovered.end, 4.0);
+    const empty = events.results[4]!;
+    assert.equal(empty.text, '');
+    assert.equal(empty.isFinal, true);
+    assert.equal(empty.speechFinal, true);
+    assert.equal(empty.words, undefined);
+  });
+
   it('does not ask who said what unless told to', async () => {
     const { events } = open('multi');
     await eventually(() => events.count('live'));
