@@ -121,6 +121,29 @@ from three held lines instead (`RIG_PARTNER=none`), it was learned on 5536-777 o
 held lines are 0.4 like mine and so are taken as mine translating for them): there leaked 6/6/0 → 0/1/0 and
 mine 90/95/75 → 91/93/77.
 
+Like against like (later that day): their recording is now compared with mine, and their voice as heard
+here with mine as heard here, instead of the best of each pair. Through the earphone channel my voice as
+learned here is much like anyone heard through it (their held lines were 0.56-0.67 like it, my own lines
+0.48-0.79), while the two recordings tell them apart (theirs scores their lines 0.30-0.47 and mine
+0.04-0.29; mine scores their lines 0.10-0.21 and my own 0.07-0.45). So speech for me is theirs when it is
+somewhat like their recording (0.2, the `alike` bar) and 0.1 more like it than like mine, or clearly like
+their voice here (0.4) and 0.1 more like it than like mine here; and their held lines teach their voice
+here however like mine here they are, as nothing else would through earphones. Before → after with the
+split, single runs: mine 859 → 878 of 1263, theirs leaked under my button 116 → 30 of 507, their held lines
+348 → 355 of 510. The earphone sets, unchanged by the rule above, leaked 23/24/0 → 6/14/0 (251-5694),
+16/16/0 → 0/0/4 (5536-777) and 15/15/0 → 0/5/0 (5694-251) at clean/10 dB/5 dB, with mine 68/54/21 →
+82/54/21, 64/47/6 → 70/42/6 and 64/46/15 → 62/46/15; the clean-microphone sets leaked 1/1/5 → 0/1/0 and
+0/0/0 → 0/0/0, with mine 81/79/62 → 81/79/62 and 89/93/70 → 89/92/77. `python3 -I gate_stats.py` counts
+the gate's windows of these runs against the truth: of 916 windows with sound during my lines alone, 184
+were judged someone else's, 174 of them under both of my bars (plain unlike my voice, mostly through
+earphones in noise) and 10 by this rule; of 322 windows with sound during their unheld lines alone, 53
+still passed as mine, 48 were kept out by their recording against mine alone, 17 by their voice here
+against mine here alone, 119 by both and 85 by my bars alone. Tried with it and dropped: having the recognizer finalize when the gate closes in the middle
+of a turn, so that the last words sent are given at once rather than held until more sound comes and
+glued onto the next line. It cut my lines in two at every close on an interjection of theirs, and the
+pieces failed the voice check more often than the whole lines had: mine 841 and theirs leaked 34 with it,
+against 878 and 30 without.
+
 ### Other speaker models (2026-10-30)
 
 Ten models sherpa-onnx ships were measured with `separation.py` on the three earphone sets, clean and at 10 dB, by

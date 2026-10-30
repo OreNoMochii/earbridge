@@ -169,6 +169,9 @@ const VOICES: Record<number, number[]> = {
   12000: [0.38, 0.8167, -0.4343],
   13000: [0.1, 0.95, 0.2956],
   14000: [0.376, 0.5, -0.78],
+  24000: [0.25, 0.45, 0.8573],
+  25000: [0.38, 0.45, 0.8081],
+  26000: [0.85, 0.35, 0.394],
   15000: [0.15, 0, 0.9887],
   16000: [0, 0.3, -0.954],
   17000: [0.3, 0.9327, 0.2],
@@ -452,11 +455,58 @@ describe('voices', () => {
     assert.deepEqual(rounded(theirs.printHere('them')!), [0, 0.95, 0.312], 'nothing learned from it');
     // Said for me, somewhat like my voice but clearly theirs: not mine, vouched for or not.
     assert.equal(theirs.admits('me', print(11000), 2, true), false);
+    // Said for them in a voice clearly theirs and nearer theirs than mine, however like mine it is: theirs,
+    // and their voice here is learned from it; not from one as like mine, which may be mine translating for them.
+    const nearer = new VoiceFilter(printer);
+    nearer.setPartner(print(2000));
+    assert.equal(nearer.admits('them', print(23000), 2, true), true, '0.5 like mine, 0.55 like theirs: let through');
+    assert.equal(nearer.printHere('them'), undefined, 'but not learned as their voice here');
+    assert.equal(nearer.admits('them', print(1000), 2, true), true, 'my voice, said for them');
+    assert.equal(nearer.printHere('them'), undefined);
+    assert.equal(nearer.admits('them', print(21000), 2, true), true, '0.45 like mine, 0.7 like theirs');
+    const learned = (): boolean => (nearer.printHere('them') ?? []).every((v, i) => Math.abs(v - (print(21000)[i] ?? NaN)) < 0.002);
+    assert.ok(nearer.printHere('them') && learned(), 'learned as their voice here');
+    nearer.translated('them', print(23000), 2);
+    assert.ok(!learned(), 'as like my recording as theirs, but 0.98 like their voice here against 0.5 like mine here: learned');
+    const before = [...nearer.printHere('them')!];
+    nearer.translated('them', print(26000), 2);
+    assert.deepEqual([...nearer.printHere('them')!], before, 'nothing learned from a voice as like theirs here as mine, translated after all');
+    assert.equal(nearer.judge(['me'], print(21000)), 'other', 'and speech for me in that voice is theirs');
 
     // Until their voice is known, what is said for them is let through anyway, and theirs learned from it.
     const unknown = new VoiceFilter(printer);
     assert.equal(unknown.admits('them', print(2000), 2, true), true);
     assert.equal(unknown.partner, 'unknown');
+  });
+
+  it('tells their voice from mine by their recording against mine, however like my voice here it is', () => {
+    const filter = new VoiceFilter(printer);
+    filter.setPartner(print(2000));
+    // My voice as learned here, through earphones in a loud place, is much like anyone heard through them.
+    assert.equal(filter.admits('me', print(7000), 2, true), true);
+    assert.deepEqual(rounded(filter.printHere('me')!), rounded(print(7000)));
+    // 0.25 like my recording, 0.45 like theirs, 0.84 like my voice here: theirs, however like my voice here.
+    assert.equal(filter.ratherTheirs('me', print(24000)), true);
+    assert.equal(filter.admits('me', print(24000), 2, true), false);
+    assert.equal(filter.judge(['me'], print(24000)), 'other');
+    // 0.38 like mine, 0.45 like theirs: within the margin, mine.
+    assert.equal(filter.ratherTheirs('me', print(25000)), false);
+    assert.equal(filter.admits('me', print(25000), 2, true), true);
+    // Said for them holding the button, the one within the margin teaches nothing of their voice here, in case it
+    // is mine, translating for them; the one more like theirs does, however like my voice here it is.
+    assert.equal(filter.admits('them', print(25000), 2, true), true);
+    assert.equal(filter.printHere('them'), undefined);
+    assert.equal(filter.admits('them', print(24000), 2, true), true);
+    assert.deepEqual(rounded(filter.printHere('them')!), rounded(print(24000)));
+    // Their voice learned from what they said is of speech heard here, as mine here is: it counts against my
+    // voice here too, and must be clearly like it (see `same`).
+    const learned = new VoiceFilter(printer);
+    for (let i = 0; i < 3; i++) assert.equal(learned.admits('them', print(2000), 2), true);
+    assert.equal(learned.partner, 'learned');
+    assert.equal(learned.printHere('them'), undefined);
+    assert.equal(learned.ratherTheirs('me', print(24000)), true, '0.45 like theirs as learned, 0.25 like my recording: theirs');
+    assert.equal(learned.admits('me', print(7000), 2, true), true);
+    assert.equal(learned.ratherTheirs('me', print(24000)), false, 'but 0.84 like my voice here, once that is learned: not theirs');
   });
 
   it('takes speech for me in a voice clearly more like theirs than mine for theirs, however like mine it is', () => {

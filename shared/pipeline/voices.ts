@@ -112,14 +112,14 @@ const UNLIKE_MARGIN = 0.25;
  */
 const LEARN_MARGIN = 0.1;
 /**
- * Speech for me in a voice clearly theirs (see `same`) and this much more like theirs than
- * like mine is theirs, however like mine it is. A bar alone takes a voice somewhat like mine
- * for mine, and the other person's voice, of the same gender, is that like it now and then (on
- * the rig a man's voice like mine was as like my voice here as my own lines). Theirs is known
- * from their recording, or learned from what they say holding their button, so this tells the
- * two apart from early in a talk, whatever is settled of mine here. The margin is for a voice
- * somewhat like both by chance: my own lines through earphones in a crowd have been as
- * little as 0.43 like my voice here.
+ * Speech for me in a voice this much more like theirs than like mine is theirs, however like
+ * mine it is (see `ratherTheirs`). A bar alone takes a voice somewhat like mine for mine, and
+ * the other person's voice, of the same gender, is that like it now and then (on the rig a
+ * man's voice like mine was as like my voice here as my own lines). Theirs is known from their
+ * recording, or learned from what they say holding their button, so this tells the two apart
+ * from early in a talk, whatever is settled of mine here. The margin is for a voice somewhat
+ * like both by chance: my own lines through earphones in a crowd have been as little as 0.43
+ * like my voice here, and 0.03 more like my recording than theirs.
  */
 const NEARER_MARGIN = 0.1;
 /**
@@ -250,8 +250,9 @@ export class VoiceFilter {
    * learned must not drift their way, or their voice passes for ours from then on. Once how
    * it sounds here is settled, such speech is not even that side's unless it is somewhat
    * like that too (see `unlike`): it is left for the user to ask for.
-   * Speech for me in a voice clearly more like theirs than mine is theirs, however like mine it
-   * is (see `ratherTheirs`).
+   * Speech for me in a voice more like theirs than mine is theirs, however like mine it is (see
+   * `ratherTheirs`); said for them holding the button, such speech teaches how theirs sounds
+   * here, however like my voice here it is (see `learn`).
    */
   admits(side: string, print: Float32Array, seconds: number, vouched = false): boolean {
     // So that each is still told when the noise around changes how it sounds; only from
@@ -263,6 +264,7 @@ export class VoiceFilter {
     }
     if (this.isMine(print) && !this.ratherTheirs(side, print)) {
       if (similarity(print, this.mine) >= this.bars.same) this.learn(SOLO_ME, print, seconds);
+      else if (vouched && side === SOLO_THEM) this.learn(SOLO_THEM, print, seconds);
       return true;
     }
     if (vouched && this.mayBe(side, print) && !this.unlike(side, print)) {
@@ -310,15 +312,28 @@ export class VoiceFilter {
   }
 
   /**
-   * Whether a voice heard for `side` is rather the other person's: for me, one clearly theirs
-   * (see `same`) and more like theirs than like mine by NEARER_MARGIN, as recorded or learned,
-   * or as heard here; never for them, whose speech may be in my voice, and never while theirs
-   * is not known.
+   * Whether a voice heard for `side` is rather the other person's: for me, one more like theirs
+   * than like mine by NEARER_MARGIN; never for them, whose speech may be in my voice, and never
+   * while theirs is not known. Like against like: their recording against mine, where it must be
+   * somewhat like theirs (see `alike`), and their voice as heard here, or learned from what they
+   * said here, against mine as heard here, where it must be clearly like theirs (see `same`). My
+   * voice as learned here, through earphones in a loud place, is much like anyone heard through
+   * them: on the rig the other person's lines through the same earphones were as like it as my
+   * own, so it tells the two apart no better than their recording, of a voice on its own, against
+   * mine, which kept most of their words out of my lines on the clean clip, and half at 10 dB.
    */
   ratherTheirs(side: string, print: Float32Array): boolean {
-    if (side !== SOLO_ME) return false;
-    const theirs = this.likePartner(print);
-    return theirs >= this.bars.same && theirs >= this.likeMine(print) + NEARER_MARGIN;
+    return side === SOLO_ME && this.nearerTheirs(print);
+  }
+
+  /** Whether a voice is more like theirs than like mine, like against like (see `ratherTheirs`). */
+  private nearerTheirs(print: Float32Array): boolean {
+    if (!this.theirs) return false;
+    const recorded = this.theirs.known === 'recorded';
+    const theirs = similarity(print, this.theirs.print);
+    if (recorded && theirs >= this.bars.alike && theirs >= similarity(print, this.mine) + NEARER_MARGIN) return true;
+    const here = Math.max(this.partnerHere.likeness(print), recorded ? -1 : theirs);
+    return here >= this.bars.same && here >= this.likeMine(print) + NEARER_MARGIN;
   }
 
   /**
@@ -380,7 +395,11 @@ export class VoiceFilter {
    * Speech that is that side's, e.g. translated after all: how its voice sounds here is
    * learned from it, if it is still somewhat like that voice as recorded or learned, and
    * not much less like the voice here than that side's own lines have been (see
-   * LEARN_MARGIN). Theirs only once it is known, and only from speech unlike mine.
+   * LEARN_MARGIN). Theirs only once it is known, and never from speech that may be in my
+   * voice, said for them: from speech nothing like mine, or more like theirs than mine (see
+   * `ratherTheirs`), as the other person's voice, of the same gender, is somewhat like mine
+   * now and then, and nothing else would teach how theirs sounds here, through this
+   * microphone in this place.
    */
   learn(side: string, print: Float32Array, seconds: number): void {
     if (seconds < MIN_LEARN_SECONDS) return;
@@ -389,7 +408,9 @@ export class VoiceFilter {
       return;
     }
     const theirs = this.theirs?.print;
-    if (theirs && similarity(print, theirs) >= this.bars.alike && this.likeMine(print) < this.bars.alike && this.partnerHere.mayLearn(print)) this.partnerHere.add(print, seconds);
+    if (!theirs) return;
+    const own = (similarity(print, theirs) >= this.bars.alike && this.likeMine(print) < this.bars.alike) || this.nearerTheirs(print);
+    if (own && this.partnerHere.mayLearn(print)) this.partnerHere.add(print, seconds);
   }
 
   /**
