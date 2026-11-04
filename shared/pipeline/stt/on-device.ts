@@ -1,4 +1,4 @@
-// Speech recognition that runs on the phone itself (Android's on-device recognizer),
+// Speech recognition that runs on the phone itself (Android's on-device recognizer, or Apple's),
 // behind the same interface as Deepgram. The native side recognizes one session at a
 // time; this turns its sessions into a stream that can be finalized and closed.
 
@@ -15,7 +15,7 @@ export type RecognitionEvent =
    * audio, if the recognizer reports word timings.
    */
   | { session: number; type: 'partial' | 'segment'; text: string; start?: number; end?: number }
-  /** An Android SpeechRecognizer error code. */
+  /** An Android SpeechRecognizer error code (iOS reports the same codes). */
   | { session: number; type: 'error'; code: number; fatal: boolean }
   | { session: number; type: 'end' };
 
@@ -196,7 +196,7 @@ class OnDeviceStream implements SttStream {
     const name = languageName(this.language);
     switch (code) {
       case ERROR_INSUFFICIENT_PERMISSIONS:
-        return "Android didn't allow EarBridge to use speech recognition.";
+        return "The phone didn't allow EarBridge to use speech recognition. Allow it in the phone's settings.";
       case ERROR_LANGUAGE_NOT_SUPPORTED:
         return `Speech recognition on this phone doesn't support ${name}.`;
       case ERROR_LANGUAGE_UNAVAILABLE:

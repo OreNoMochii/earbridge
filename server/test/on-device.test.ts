@@ -233,7 +233,7 @@ describe('OnDeviceSttProvider', () => {
       return errors[0]?.[0];
     });
     assert.deepEqual(messages, [
-      "Android didn't allow EarBridge to use speech recognition.",
+      "The phone didn't allow EarBridge to use speech recognition. Allow it in the phone's settings.",
       "Speech recognition on this phone doesn't support German.",
       'Speech recognition on this phone stopped working (error 5).',
     ]);

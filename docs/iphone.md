@@ -9,13 +9,13 @@ certificates and API keys stay on your Mac, on Apple's servers, or on the phone.
 | Feature | Android | iPhone |
 | --- | --- | --- |
 | Translation with **My own API keys** or an **EarBridge server** | Yes | Yes |
-| **On this phone** (offline engines) | Android 13 or newer | No: iOS has its own engines, see [on-device.md](on-device.md) |
+| **On this phone** (offline engines) | Android 13 or newer | **iOS 26 or newer**, written but untested: Apple's SpeechAnalyzer and Translation framework, in `mobile/modules/earbridge-audio/ios`. The iPhone asks once to allow speech recognition, and again before it downloads a language. Older iPhones show why it is unavailable. |
 | Earphones, their microphone and play/pause button | Yes | Set up (`react-native-audio-api`), untested |
 | Translating with the screen off | Yes, with a notification | Set up (the `audio` background mode), untested |
 | **Voices**: telling the two voices from everyone else's, *Separate voices*, and leaving out what someone else said over a held line | Yes | **No.** The speaker model (CAM++) and the separator run in a Kotlin module, `mobile/modules/earbridge-audio`, which has no Swift side yet. The app hides these settings when the module is missing (`canCheckVoices()` in `mobile/src/engines/voices.ts`). |
 | Talk reports (`EXPO_PUBLIC_TALK_REPORT=1`) | Read over USB with `adb pull` | Written to the app's documents folder, but the app does not share it with Finder yet |
 
-Porting the voice checks means writing the three modules of `expo-module.config.json` in Swift with sherpa-onnx's
+Porting the voice checks means writing the other two modules of `expo-module.config.json` in Swift with sherpa-onnx's
 iOS framework and ONNX Runtime for the separator. Until then, iPhone users should use **Hold to talk** in noisy places.
 
 ## Path 1: build it on a Mac, install it over a cable
@@ -28,7 +28,7 @@ This is free, with any Apple ID. The app then runs for 7 days; after that, build
   the Command Line Tools alone are not enough (`xcode-select -p` must print a path inside `Xcode.app`).
 - **CocoaPods**: `brew install cocoapods` (or `sudo gem install cocoapods`).
 - **Node.js 22.18 or newer**, as for Android.
-- An iPhone on **iOS 15.1 or newer**, with **Developer Mode** turned on: Settings → Privacy & Security → Developer
+- An iPhone on **iOS 16.4 or newer** (iOS 26 or newer for **On this phone**), with **Developer Mode** turned on: Settings → Privacy & Security → Developer
   Mode (it appears once the phone has been plugged into a Mac with Xcode). Plug it in with a cable and tap **Trust**
   on the phone.
 - Open Xcode once, accept the licence, and sign in with your Apple ID under Xcode → Settings → Accounts.

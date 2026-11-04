@@ -1,6 +1,6 @@
-// On this phone: Android's own speech recognition and Google ML Kit translation, read
-// aloud by the phone's voice. No server and no keys. Each language is downloaded once
-// (about 30 MB for translation), then it works offline.
+// On this phone: Android's own speech recognition and Google ML Kit translation, or on
+// iPhone Apple's (iOS 26 and newer), read aloud by the phone's voice. No server and no
+// keys. Each language is downloaded once, then it works offline.
 
 import { Platform } from 'react-native';
 
@@ -36,10 +36,13 @@ export function localSupport(): LocalSupport {
 }
 
 function checkSupport(): LocalSupport {
-  if (Platform.OS !== 'android') {
-    return { available: false, reason: `On-phone translation isn't available on iPhone yet. ${OTHER_ENGINES}` };
-  }
-  if (typeof Platform.Version === 'number' && Platform.Version < 33) {
+  if (Platform.OS === 'ios') {
+    if (iosVersion() < 26) {
+      return { available: false, reason: `On-phone translation needs iOS 26 or newer. ${OTHER_ENGINES}` };
+    }
+  } else if (Platform.OS !== 'android') {
+    return { available: false, reason: `On-phone translation isn't available here. ${OTHER_ENGINES}` };
+  } else if (typeof Platform.Version === 'number' && Platform.Version < 33) {
     return { available: false, reason: `On-phone translation needs Android 13 or newer. ${OTHER_ENGINES}` };
   }
   let available = false;
@@ -53,9 +56,15 @@ function checkSupport(): LocalSupport {
     : { available: false, reason: `This phone has no on-device speech recognition. ${OTHER_ENGINES}` };
 }
 
+/** The iOS major version, such as 26; 0 elsewhere. */
+function iosVersion(): number {
+  return Platform.OS === 'ios' ? Number.parseInt(String(Platform.Version), 10) || 0 : 0;
+}
+
 /**
  * Whether the phone's recognizer can say when words were said, which the noisy-place
- * filters need: Android 14 and newer.
+ * filters need: Android 14 and newer. (Apple's says too, but the filters' voice checks
+ * have no iPhone side yet.)
  */
 export function localWordTimings(): boolean {
   return Platform.OS === 'android' && typeof Platform.Version === 'number' && Platform.Version >= 34;
@@ -109,7 +118,11 @@ async function recognitionLocale(
   const name = languageName(language);
   const picked = pickRecognitionLocale(language, await abortable(module.recognitionLanguages(), signal));
   if (!picked) throw new Error(`Speech recognition on this phone doesn't support ${name}. ${OTHER_ENGINES}`);
-  if (picked.installed) return picked.locale;
+  if (picked.installed) {
+    // iOS also keeps the language for this app, which a language some other app installed needs.
+    if (Platform.OS === 'ios') await abortable(module.downloadRecognition(picked.locale), signal).catch(() => {});
+    return picked.locale;
+  }
 
   const { locale } = picked;
   const downloading = `Downloading ${name} speech recognition…`;
@@ -153,21 +166,24 @@ async function prepareTranslation(
   if (mine === theirs) return;
   const downloaded = new Set(await abortable(module.translationModels(), signal));
   const missing = [myLang, theirLang].filter((language) => !downloaded.has(baseLanguage(language))).map(languageName);
-  if (missing.length > 0) progress(`Downloading ${missing.join(' and ')} translation…`);
+  // iOS does not say what it has: it asks before it downloads anything.
+  if (Platform.OS === 'ios') progress(`Getting ${[myLang, theirLang].map(languageName).join(' and ')} translation ready…`);
+  else if (missing.length > 0) progress(`Downloading ${missing.join(' and ')} translation…`);
   try {
     await abortable(module.prepareTranslation(mine, theirs), signal);
     await abortable(module.prepareTranslation(theirs, mine), signal);
   } catch (error) {
     if (signal.aborted) throw error;
     const names = (missing.length > 0 ? missing : [myLang, theirLang].map(languageName)).join(' and ');
-    throw new Error(
-      `The translation for ${names} could not be downloaded. Connect to the internet once to download it (about 30 MB per language).`,
-      { cause: error },
-    );
+    const how =
+      Platform.OS === 'ios'
+        ? 'Connect to the internet and allow the download when the iPhone asks.'
+        : 'Connect to the internet once to download it (about 30 MB per language).';
+    throw new Error(`The translation for ${names} could not be downloaded. ${how}`, { cause: error });
   }
 }
 
-/** ML Kit translates a whole utterance at once; there is nothing to stream. */
+/** ML Kit and Apple translate a whole utterance at once; there is nothing to stream. */
 class OnDeviceTranslator implements Translator {
   private readonly module: OnDeviceModule;
 

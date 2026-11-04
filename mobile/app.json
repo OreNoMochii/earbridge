@@ -15,6 +15,7 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Alo connects to the computer that translates for it on your network.",
+        "NSSpeechRecognitionUsageDescription": "Alo recognizes what is said on the phone itself to translate it.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         }

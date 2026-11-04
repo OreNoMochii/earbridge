@@ -5,7 +5,7 @@ with your own API keys. This page answers one question: could the phone do all t
 internet and no API keys? The three steps are speech to text, translation, and reading the translation aloud.
 
 This is research, done on 1 October 2026. Its Android setup is now in the app: choose **On this phone** under
-**Translation**. See [How the app does it](#how-the-app-does-it). iPhone and the open models are still to do.
+**Translation**. See [How the app does it](#how-the-app-does-it). The iPhone side is written but untested; the open models are still to do.
 
 ## Short answer
 
@@ -170,11 +170,21 @@ same way.
 2. **Translation:** ML Kit, through the same module. A missing language downloads the first time it is used.
 3. **Voice:** the phone's own voice, through expo-speech, as in the other modes.
 
+On iPhone (iOS 26 or newer) the same module has a Swift side, `mobile/modules/earbridge-audio/ios`, with the same
+functions and events. It has been type-checked against the iOS 26 SDK but not yet built or run on an iPhone.
+
+1. **Speech to text:** `OnDeviceRecognition.swift` gives each Me or Them stretch to its own SpeechAnalyzer with a
+   SpeechTranscriber, converting the app's 16 kHz audio to the format the analyzer asks for. Like on Android it hears
+   the app's chosen microphone, and the `audio` background mode should keep it going with the screen off. A missing
+   language downloads through Apple's AssetInventory.
+2. **Translation:** `OnDeviceTranslation.swift` uses Apple's Translation framework. iOS downloads a language pair only
+   from a SwiftUI view, after asking, so the module shows an invisible one for the download. Translating needs no view
+   (iOS 26).
+
+The voice checks (**Voices**) stay Android-only; see [iphone.md](iphone.md).
+
 Still to do:
 
-- **iPhone:** react-native-nitro-speech is the only React Native library for SpeechAnalyzer. It stops listening when
-  the app goes to the background, so screen-off use needs a modified copy, or a native module like Android's.
-  expo-translate-text uses Apple's Translation framework. It translates one sentence at a time.
 - **Open models,** for the languages and phones that the built-in engines don't cover: whisper.rn for speech, and
   llama.rn with Gemma 4 E2B for translation.
 

@@ -9,7 +9,7 @@ export type RecognitionEvent =
    * audio (Android 14 and newer, from recognizers that report word timings).
    */
   | { session: number; type: 'partial' | 'segment'; text: string; start?: number; end?: number }
-  /** An Android SpeechRecognizer error code. */
+  /** An Android SpeechRecognizer error code (iOS reports the same codes). */
   | { session: number; type: 'error'; code: number; fatal: boolean }
   | { session: number; type: 'end' };
 
@@ -28,25 +28,25 @@ export type EarbridgeOnDeviceEvents = {
 };
 
 declare class EarbridgeOnDeviceModule extends NativeModule<EarbridgeOnDeviceEvents> {
-  /** Android 13 or newer with an on-device speech recognizer. */
+  /** Android 13 or newer with an on-device speech recognizer, or iOS 26 or newer. */
   isAvailable(): boolean;
   recognitionLanguages(): Promise<RecognitionLanguages>;
-  /** "scheduled" or "requested": Android downloads it in its own time. */
+  /** "scheduled" or "requested": Android downloads it in its own time. iOS resolves "done". */
   downloadRecognition(language: string): Promise<'done' | 'scheduled' | 'requested'>;
-  /** Sessions are recognized one at a time, in the order they start. */
+  /** Sessions are recognized one at a time, in the order they start (side by side on iOS). */
   startRecognition(session: number, language: string): void;
   /** 16 kHz 16-bit mono PCM. */
   writeAudio(session: number, pcm: Uint8Array): void;
   /** Recognizes the rest of what was written, then reports "end". */
   endAudio(session: number): void;
   cancelRecognition(session: number): void;
-  /** ML Kit language codes ("en", "es", "zh"...) of the translation models already on the phone. */
+  /** ML Kit language codes ("en", "es", "zh"...) of the translation models already on the phone; none on iOS. */
   translationModels(): Promise<string[]>;
-  /** Downloads what the language pair needs (about 30 MB per language), unless it is already there. */
+  /** Downloads what the language pair needs (about 30 MB per language), unless it is already there. iOS asks first. */
   prepareTranslation(source: string, target: string): Promise<void>;
   translate(source: string, target: string, text: string): Promise<string>;
   closeTranslation(): void;
 }
 
-// Android only; undefined on iOS.
+// Android and iOS (ios/EarbridgeOnDeviceModule.swift).
 export default requireOptionalNativeModule<EarbridgeOnDeviceModule>('EarbridgeOnDevice');
