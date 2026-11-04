@@ -35,8 +35,11 @@ This is free, with any Apple ID. The app then runs for 7 days; after that, build
 
 ### Build and install
 
+Get the code first. The repository is private: ask its owner for access, or for a copy.
+
 ```sh
-cd mobile
+git clone https://github.com/OreNoMochii/earbridge.git
+cd earbridge/mobile
 npm install
 npx expo prebuild --platform ios      # generates mobile/ios (git-ignored) and runs pod install
 npx expo run:ios --device --configuration Release
@@ -79,7 +82,9 @@ on Expo's Macs, so no Xcode is needed, and can hand it out through TestFlight.
 
 ```sh
 npm install -g eas-cli
-cd mobile
+git clone https://github.com/OreNoMochii/earbridge.git
+cd earbridge/mobile
+npm install
 eas login                     # an Expo account; free for a few builds a month
 eas build:configure           # writes mobile/eas.json (safe to commit: it holds no secrets)
 eas build --platform ios --profile preview
