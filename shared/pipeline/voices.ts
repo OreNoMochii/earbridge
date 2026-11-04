@@ -272,6 +272,16 @@ export class VoiceFilter {
       if (!here.print) this.learn(side, print, seconds);
       return true;
     }
+    // Said for them holding the button, through earphones in a loud place, their voice can be
+    // nothing like their recording: theirs all the same, unless clearly not theirs as heard here.
+    // Not a voice learned from what was said here, which is how theirs sounds here already; once
+    // something is learned of theirs here, only a voice somewhat like that (see `unlike`).
+    // Nothing is learned from it: on the rig, through earphones, a voice of theirs learned so
+    // was as like my next lines as mine, and the gate shut them out.
+    const somewhat = !this.partnerHere.print || this.likePartner(print) >= this.bars.unlike;
+    if (vouched && side === SOLO_THEM && this.theirs?.known === 'recorded' && somewhat && !this.unlike(side, print)) {
+      return true;
+    }
     if (this.checks(side) || this.isRejected(print)) return false;
     this.learnPartner(print, seconds);
     return true;

@@ -277,6 +277,30 @@ joined under my label into a 20.6 s line 0.69 like my voice here, was translated
 mine 60 → 52 with 5 → 0 leaked. A wash on my words, and the leak up where it matters most. Dropped: the gate
 keeps closing on a window for me alone that is unlike my voice here.
 
+### Their held lines unlike their recording (2026-11-04)
+
+Through the earphone channel, what they said holding their button was 0.07 to 0.2 like their recording (on the
+earphone 5536-777 set at 5 dB, "Yeah. I had to kinda think things out a little." 0.197, "The old terrorist turned
+fully in heaven." 0.077): under the bar, skipped as someone else's, every run. Their voice here, which could have
+told them apart, was learned only from a line at least 0.4 like their recording, so it was never learned either.
+
+Tried first: such a line, held for them and vouched for, passes and teaches their voice here (unless it is rather
+mine, like against like). Over the five sets, single runs, against 26b1964: mine 924 → 903 of 1263, theirs leaked
+35 → 29 of 507, their held 366 → 383 of 510. The leak fell because the gate, knowing their voice here, shut their
+lines out under my button; but through the channel their voice here was as like my next lines as my voice here
+(on earphone 5694-251 at 10 dB my line at 59 s was 0.38-0.65 like their voice here, 0.25-0.46 like mine here), so
+the gate shut those out too: 59 → 44 of 75 mine on that clip, and 12 → 6 on 5536-777 at 5 dB, where my line at
+77 s was judged rather theirs (0.41 like their voice here, 0.27 like mine). A longer lead-in when the gate opens
+(0.3 → 1 s) did not bring the words back (44 → 41). Dropped.
+
+Kept (`admits` in `shared/pipeline/voices.ts`): the line passes, while their voice is recorded and nothing is
+learned of it here yet, or once it is, when the line is somewhat like it (`unlike`); nothing is learned from it.
+Against 26b1964, single runs over the five sets: every clip the same but earphone 5536-777 at 5 dB, their held
+0 → 17 of 41 (the two lines above); all: mine 924 → 925 of 1263, theirs leaked 35 → 35 of 507, their held
+366 → 383 of 510. What it costs: holding their button, anyone heard is translated as them until
+their voice here is learned, as before their voice was recorded; the button is the user's word for whose turn
+it is.
+
 ## Reading real talks
 
 Test builds of the app (made with `EXPO_PUBLIC_TALK_REPORT=1`) keep a report of each talk on

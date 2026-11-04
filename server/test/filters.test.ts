@@ -446,7 +446,6 @@ describe('voices', () => {
     theirs.setPartner(print(3000));
     assert.equal(theirs.printHere('them'), undefined);
     assert.equal(theirs.admits('them', print(8000), 2), false, 'not clearly theirs');
-    assert.equal(theirs.admits('them', print(2000), 2, true), false, 'nothing like their voice');
     assert.equal(theirs.admits('them', print(8000), 2, true), true);
     assert.equal(theirs.admits('them', print(8000), 2), true, 'learned as their voice here');
     assert.deepEqual(rounded(theirs.printHere('them')!), [0, 0.95, 0.312]);
@@ -472,6 +471,24 @@ describe('voices', () => {
     nearer.translated('them', print(26000), 2);
     assert.deepEqual([...nearer.printHere('them')!], before, 'nothing learned from a voice as like theirs here as mine, translated after all');
     assert.equal(nearer.judge(['me'], print(21000)), 'other', 'and speech for me in that voice is theirs');
+
+    // Through earphones in a loud place, what they say holding the button can be nothing like their recording:
+    // theirs all the same, but nothing is learned from it, since through earphones anyone sounds as like me.
+    const earphones = new VoiceFilter(printer);
+    earphones.setPartner(print(3000));
+    assert.equal(earphones.admits('them', print(2000), 2), false, 'nothing like their recording, not vouched for');
+    assert.equal(earphones.admits('them', print(2000), 2, true), true, 'vouched for');
+    assert.equal(earphones.printHere('them'), undefined, 'and not learned as their voice here');
+    assert.equal(earphones.ratherTheirs('me', print(2000)), false, 'so it tells nothing of theirs from mine');
+    // Once their voice here is learned, only a voice somewhat like it.
+    assert.equal(earphones.admits('them', print(3000), 2, true), true);
+    assert.deepEqual(rounded(earphones.printHere('them')!), rounded(print(3000)));
+    assert.equal(earphones.admits('them', print(16000), 2, true), false, 'nothing like their voice here, nor recorded');
+    // A voice learned from what was said for them is of speech heard here already: nothing like it is someone else's.
+    const learnedHere = new VoiceFilter(printer);
+    for (let i = 0; i < 3; i++) learnedHere.admits('them', print(3000), 2);
+    assert.equal(learnedHere.partner, 'learned');
+    assert.equal(learnedHere.admits('them', print(2000), 2, true), false);
 
     // Until their voice is known, what is said for them is let through anyway, and theirs learned from it.
     const unknown = new VoiceFilter(printer);
